@@ -81,6 +81,7 @@ var (
 // and CA configuration. Used in both Istiod and Agent.
 // TODO: ProxyConfig should have most of those, and be passed to all components
 // (as source of truth)
+// secret discovery 的可配置项
 type Options struct {
 	// WorkloadUDSPath is the unix domain socket through which SDS server communicates with workload proxies.
 	WorkloadUDSPath string
@@ -124,6 +125,7 @@ type Options struct {
 	// CA, by updating the Secret or VM file. We will watch the file for changes
 	// or check before the cert expires. This assumes the certs are in the
 	// well-known ./etc/certs location.
+	// 证书文件挂载
 	FileMountedCerts bool
 
 	// PilotCertProvider is the provider of the Pilot certificate (PILOT_CERT_PROVIDER env)

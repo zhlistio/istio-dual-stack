@@ -79,6 +79,7 @@ const (
 // prompting the client to call GenerateSecret again, if they still care about the certificate. For
 // files, this callback is instead triggered on any change to the file (triggering on expiration
 // would not be helpful, as all we can do is re-read the same file).
+// SecretManagerClient 的作用到底是什么？
 type SecretManagerClient struct {
 	caClient security.Client
 
@@ -169,6 +170,8 @@ func NewSecretManagerClient(caClient security.Client, options *security.Options)
 	}
 
 	ret := &SecretManagerClient{
+		// 创造了一个队列
+		// TODO 研究下这个队列的作用
 		queue:         queue.NewDelayed(queue.DelayQueueBuffer(0)),
 		caClient:      caClient,
 		configOptions: options,
@@ -609,6 +612,7 @@ func (sc *SecretManagerClient) registerSecret(item security.SecretItem) {
 	}, delay)
 }
 
+// 监听文件的变更事件
 func (sc *SecretManagerClient) handleFileWatch() {
 	var timerC <-chan time.Time
 	events := make(map[string]fsnotify.Event)

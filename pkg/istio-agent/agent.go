@@ -77,18 +77,27 @@ const (
 // - root cert to use for connecting to XDS server
 // - CA address, with proper defaults and detection
 type Agent struct {
+	// proxy 的配置信息
 	proxyConfig *mesh.ProxyConfig
 
+	// agent 的配置信息
 	cfg     *AgentOptions
+
+	// security 的配置信息
 	secOpts *security.Options
 
+	// sds server 的配置信息
 	sdsServer   *sds.Server
+
+	// secret 证书的管理器
 	secretCache *cache.SecretManagerClient
 
 	// Used when proxying envoy xds via istio-agent is enabled.
+	// 当启用通过 istio-agent 代理 envoy xds 时使用。
 	xdsProxy *XdsProxy
 
 	// local DNS Server that processes DNS requests locally and forwards to upstream DNS if needed.
+	// 本地 DNS 服务器，在本地处理 DNS 请求并在需要时转发到上游 DNS。
 	localDNSServer *dns.LocalDNSServer
 }
 
@@ -96,7 +105,6 @@ type Agent struct {
 // Most are from env variables ( still experimental ) or for testing only.
 // Eventually most non-test settings should graduate to ProxyConfig
 // Please don't add 100 parameters to the NewAgent function (or any other)!
-// TODO 看到这里，标记下
 type AgentOptions struct {
 	// ProxyXDSViaAgent if true will enable a local XDS proxy that will simply
 	// ferry Envoy's XDS requests to istiod and responses back to envoy
@@ -139,7 +147,7 @@ type AgentOptions struct {
 
 // NewAgent hosts the functionality for local SDS and XDS. This consists of the local SDS server and
 // associated clients to sign certificates (when not using files), and the local XDS proxy (including
-// health checking for VMs and DNS proxying).
+// health checking for VMs and DNS proxying)。
 // NewAgent 托管本地 SDS 和 XDS 的功能。这包括本地 SDS 服务器和关联客户端签署证书（不使用文件时），以及本地 XDS 代理（包括 VM 和 DNS 代理的健康检查）。
 func NewAgent(proxyConfig *mesh.ProxyConfig, agentOpts *AgentOptions, sopts *security.Options) *Agent {
 	return &Agent{
@@ -151,11 +159,12 @@ func NewAgent(proxyConfig *mesh.ProxyConfig, agentOpts *AgentOptions, sopts *sec
 
 // Simplified SDS setup. This is called if and only if user has explicitly mounted a K8S JWT token, and is not
 // using a hostPath mounted or external SDS server.
-//
+// 简化的 SDS 的安装。当且仅当用户显式挂载 K8S JWT 令牌且未使用已挂载的 hostPath 或外部 SDS 服务器时，才会调用此方法。
 // 1. External CA: requires authenticating the trusted JWT AND validating the SAN against the JWT.
-//    For example Google CA
-//
+//  For example Google CA
+// 外部 CA：需要验证受信任的 JWT 并根据 JWT 验证 SAN。 例如谷歌 CA
 // 2. Indirect, using istiod: using K8S cert.
+// 间接，使用 istiod：使用 K8S 证书。
 func (a *Agent) Start() error {
 	var err error
 	a.secretCache, err = a.newSecretManager()
@@ -163,6 +172,8 @@ func (a *Agent) Start() error {
 		return fmt.Errorf("failed to start workload secret manager %v", err)
 	}
 
+	// 初始化 sds server
+	// TODO 记录下这里
 	a.sdsServer, err = sds.NewServer(a.secOpts, a.secretCache)
 	if err != nil {
 		return fmt.Errorf("failed to start local sds server %v", err)
@@ -293,6 +304,8 @@ func (a *Agent) newSecretManager() (*cache.SecretManagerClient, error) {
 
 	// TODO: this should all be packaged in a plugin, possibly with optional compilation.
 	log.Infof("CA Endpoint %s, provider %s", a.secOpts.CAEndpoint, a.secOpts.CAProviderName)
+
+	// 对于 GoogleCA
 	if a.secOpts.CAProviderName == "GoogleCA" || strings.Contains(a.secOpts.CAEndpoint, "googleapis.com") {
 		// Use a plugin to an external CA - this has direct support for the K8S JWT token
 		// This is only used if the proper env variables are injected - otherwise the existing Citadel or Istiod will be
@@ -305,6 +318,7 @@ func (a *Agent) newSecretManager() (*cache.SecretManagerClient, error) {
 	}
 
 	// Using citadel CA
+	// 使用 citadel CA
 	var rootCert []byte
 	var err error
 	// Special case: if Istiod runs on a secure network, on the default port, don't use TLS

@@ -51,6 +51,7 @@ type CitadelClient struct {
 }
 
 // NewCitadelClient create a CA client for Citadel.
+// NewCitadelClient 为 Citadel 创建 CA 客户端。
 func NewCitadelClient(opts *security.Options, tls bool, rootCert []byte) (*CitadelClient, error) {
 	c := &CitadelClient{
 		enableTLS:     tls,
@@ -117,6 +118,37 @@ func (c *CitadelClient) getTLSDialOption() (grpc.DialOption, error) {
 			return nil, fmt.Errorf("failed to append certificates")
 		}
 		citadelClientLog.Info("Citadel client using custom root cert: ", c.opts.CAEndpoint)
+		/**
+		2021-06-01T03:00:04.995849Z	info	citadelclient	Citadel client using custom root: istiod-iop-1-8-4.istio-system.svc:15012 -----BEGIN CERTIFICATE-----
+		MIIFCTCCAvGgAwIBAgIJAP/LfI/QveTRMA0GCSqGSIb3DQEBCwUAMCIxDjAMBgNV
+		BAoMBUlzdGlvMRAwDgYDVQQDDAdSb290IENBMB4XDTIwMDcwMjAyNDA1NloXDTMw
+		MDYzMDAyNDA1NlowIjEOMAwGA1UECgwFSXN0aW8xEDAOBgNVBAMMB1Jvb3QgQ0Ew
+		ggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQDMhz3bVBc8K35sp9H/OtVt
+		hkvnfRU6LLi2eVKOUilGBM7GXelFEDA70prSqnzt3o01ldRx76WrR+w/RndAEVoT
+		rAgLJAQ77JaFa/XVxvnQq/iOvMm6KpzZaUmowP4Hx7EFaTmnEPgfOGz9nodLQf7A
+		2Irp8HtzgAT5X9d/yYCc3vUPOpXPRXa+RWE0vRgY0sqjNjcbIoZ0/fQN71NuSD2y
+		nNYI2fUyUsKNfdpuOpYg+PqZCsFGXu6ARhxuVKM0RAGRNCZ6YqklhgP2bJuGGCfp
+		BYirryT49Hv7yClAF8R8j8ueq7pQ/RLEpTi1J5bripVEaP3fA/bKXa1KIv1NHGOl
+		3FYyUBTPudeOu2h/J7RVbb3pnqHddqnFD1pchL5F3gwC/8wz+6FnqgLkvJwTJw0T
+		jHWsExPsB8O0myTGGGM70o0el7/UWNl53Xj3U51cSWJ4vU8ngIw7HW4MYyg5IBzR
+		v5LuVVQViF4fygIJiHHzIQnAa5H8Gd6qDY/m/tqwJgjVHOLyvoT18Y9+MU67eV9u
+		j6qNrnai2DSSxqlwSSnea9nvruik9ymX1QYlifnnxF8B2Vp40msMXjnch6Ks81Rw
+		pDPb8p0xO/4LWZv5/FbyOq7skRgV9uN+GtJvU4bELw6XLGRP50EXvd9rJdsLBmex
+		OTUg+eiIeQsRQQich4aI/wIDAQABo0IwQDAdBgNVHQ4EFgQU5qpAqx8bjyFfgfso
+		FeJq4GuYN48wDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAuQwDQYJKoZI
+		hvcNAQELBQADggIBADpPSyQ8JzNnOtSp1hitColXp92sHRp+iNb+VnEGSfuPdy1u
+		SurS3QwWevZX0JohvDM5z/WHhOBLFnnlklGYSTTf7PtzKg5i8JRrmLH3dpW/nA9S
+		fwnkaK1YatLduaNMX1cC2jsg47wSk451T6hcySshtONiFjpFpAGT/mMJ563k2tpc
+		60M1aVEl2fwGar97MaI1dfdUVl337MimFL37epINPS8+ympDpPL9SVvr22hZBWVD
+		5V6btLFU3nZ3dZT5+KBE2xJAoox3DgnvJURdecPg5SMVUvjOdX3Ok5MtZLsda99J
+		r/J+XKFLTnZU7y+QI26dzBHcfCMPJO4mT8i7ymfywRmJqQH/n5Nq6TK7itLfBUpB
+		m5sDb3rkkG9GSd4du4uKr/HGyaBw7owG2raj02TsTksPy0kn1yQm5tgRXpYeT5Mv
+		2gFrsVRNwOlNkkGpdVCidwn1Z518uu5J/DOsQwe3+7Z0r18fc0H8d7Y5fyYLUCJ8
+		c7qli2G4WP+LILpR/uB/o+wZjJJHEII22dHBvGu0a1v8ZBRVtvq96hO63YI8JI5T
+		VZBtyVBVRzyyW4y8lokM+OHcIQ57y8pCTGmmzQcXrxlrDvyS/3br68Suk4H14e6A
+		Y255A4VfgZd3Wv57OhA97i9+pGwT5Va+BDoX5T8mneUxJm4dMBtEvQoeui5E
+		-----END CERTIFICATE-----
+		*/
 	}
 	var certificate tls.Certificate
 	config := tls.Config{
