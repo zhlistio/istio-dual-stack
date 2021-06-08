@@ -66,7 +66,7 @@ const (
 
 var (
 	UpstreamLocalAddressIPv4 = &net.TCPAddr{IP: net.ParseIP("127.0.0.6")}
-	UpstreamLocalAddressIPv6 = &net.TCPAddr{IP: net.ParseIP("[::6]")}
+	UpstreamLocalAddressIPv6 = &net.TCPAddr{IP: net.ParseIP("::6")}
 )
 
 var PrometheusScrapingConfig = env.RegisterStringVar("ISTIO_PROMETHEUS_ANNOTATIONS", "", "")
@@ -104,6 +104,7 @@ type Options struct {
 	AdminPort      uint16
 	IPv6           bool
 	Probes         []ready.Prober
+	Context        context.Context
 }
 
 // Server provides an endpoint for handling status probes.
@@ -144,6 +145,7 @@ func NewServer(config Options) (*Server, error) {
 	probes = append(probes, &ready.Probe{
 		LocalHostAddr: localhost,
 		AdminPort:     config.AdminPort,
+		Context:       config.Context,
 	})
 	probes = append(probes, config.Probes...)
 	s := &Server{
