@@ -28,7 +28,6 @@ type operatorDumpArgs struct {
 
 func addOperatorDumpFlags(cmd *cobra.Command, args *operatorDumpArgs) {
 	hub, tag := buildversion.DockerInfo.Hub, buildversion.DockerInfo.Tag
-
 	cmd.PersistentFlags().StringVar(&args.common.hub, "hub", hub, HubFlagHelpStr)
 	cmd.PersistentFlags().StringVar(&args.common.tag, "tag", tag, TagFlagHelpStr)
 	cmd.PersistentFlags().StringSliceVar(&args.common.imagePullSecrets, "imagePullSecrets", nil, ImagePullSecretsHelpStr)
@@ -38,6 +37,7 @@ func addOperatorDumpFlags(cmd *cobra.Command, args *operatorDumpArgs) {
 	cmd.PersistentFlags().StringVarP(&args.common.revision, "revision", "r", "", OperatorRevFlagHelpStr)
 }
 
+// operator dump 命令
 func operatorDumpCmd(rootArgs *rootArgs, odArgs *operatorDumpArgs) *cobra.Command {
 	return &cobra.Command{
 		Use:   "dump",

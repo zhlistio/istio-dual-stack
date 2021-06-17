@@ -62,6 +62,7 @@ func WaitForResources(objects object.K8sObjects, restConfig *rest.Config, cs kub
 		return nil
 	}
 
+	// 等待 CRD 创建完成
 	if err := waitForCRDs(objects, restConfig); err != nil {
 		return err
 	}
@@ -69,6 +70,7 @@ func WaitForResources(objects object.K8sObjects, restConfig *rest.Config, cs kub
 	var notReady []string
 
 	// Check if we are ready immediately, to avoid the 2s delay below when we are already redy
+	// 立即检查我们是否准备好了，以避免在我们已经准备好时出现下面的 2s 延迟现象
 	if ready, _, err := waitForResources(objects, cs, l); err == nil && ready {
 		return nil
 	}

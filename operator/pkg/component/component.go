@@ -70,6 +70,7 @@ type IstioComponent interface {
 }
 
 // CommonComponentFields is a struct common to all components.
+// CommonComponentFields 是所有组件共用的功能
 type CommonComponentFields struct {
 	*Options
 	ComponentName name.ComponentName
@@ -88,6 +89,7 @@ type CommonComponentFields struct {
 func NewCoreComponent(cn name.ComponentName, opts *Options) IstioComponent {
 	var component IstioComponent
 	switch cn {
+	// Base
 	case name.IstioBaseComponentName:
 		component = NewCRDComponent(opts)
 	case name.PilotComponentName:
@@ -399,11 +401,13 @@ func runComponent(c *CommonComponentFields) error {
 
 // renderManifest renders the manifest for the component defined by c and returns the resulting string.
 func renderManifest(c IstioComponent, cf *CommonComponentFields) (string, error) {
+	// 没启动，则上报给 prometheus
 	if !cf.started {
 		metrics.CountManifestRenderError(c.ComponentName(), metrics.RenderNotStartedError)
 		return "", fmt.Errorf("component %s not started in RenderManifest", cf.ComponentName)
 	}
 
+	// 禁用
 	if !c.Enabled() {
 		return disabledYAMLStr(cf.ComponentName, cf.ResourceName), nil
 	}
@@ -416,6 +420,7 @@ func renderManifest(c IstioComponent, cf *CommonComponentFields) (string, error)
 
 	scope.Debugf("Merged values:\n%s\n", mergedYAML)
 
+	// 根据模板 YAML 批量生成安装与部署文档
 	my, err := cf.renderer.RenderManifest(mergedYAML)
 	if err != nil {
 		log.Errorf("Error rendering the manifest: %s", err)
@@ -426,6 +431,7 @@ func renderManifest(c IstioComponent, cf *CommonComponentFields) (string, error)
 	scope.Debugf("Initial manifest with merged values:\n%s\n", my)
 
 	// Add the k8s resources from IstioOperatorSpec.
+	// 从 IstioOperatorSpec 中解析 k8s 资源
 	my, err = cf.Translator.OverlayK8sSettings(my, cf.InstallSpec, cf.ComponentName, cf.ResourceName, cf.index)
 	if err != nil {
 		metrics.CountManifestRenderError(c.ComponentName(), metrics.K8SSettingsOverlayError)
@@ -457,6 +463,7 @@ func renderManifest(c IstioComponent, cf *CommonComponentFields) (string, error)
 		return "", err
 	}
 	scope.Infof("Applying Kubernetes overlay: \n%s\n", kyo)
+	// 根据 overlay 参数对 YAML 文件进行 patch 补丁操作
 	ret, err := patch.YAMLManifestPatch(my, cf.Namespace, overlays)
 	if err != nil {
 		metrics.CountManifestRenderError(c.ComponentName(), metrics.K8SManifestPatchError)

@@ -58,6 +58,7 @@ func NewGenericRenderer(files fs.FS, dir, componentName, namespace string) *Rend
 
 // Run implements the TemplateRenderer interface.
 func (h *Renderer) Run() error {
+	// 加载配置文件
 	if err := h.loadChart(); err != nil {
 		return err
 	}
@@ -82,6 +83,7 @@ func (h *Renderer) RenderManifestFiltered(values string, filter TemplateFilterFu
 	return renderChart(h.namespace, values, h.chart, filter)
 }
 
+// 递归获取文件信息
 func GetFilesRecursive(f fs.FS, root string) ([]string, error) {
 	res := []string{}
 	err := fs.WalkDir(f, root, func(path string, d fs.DirEntry, err error) error {

@@ -140,6 +140,8 @@ func newGatewayIndex() gatewayIndex {
 // values are zero, and when push completes the status is reset.
 // The struct is exposed in a debug endpoint - fields public to allow
 // easy serialization as json.
+// PushContext 跟踪推送的状态 - 指标和错误数。 推送后指标被重置 - 开始时所有值都为零，当推送完成时，状态被重置。
+// 该结构在调试端点中公开 - 字段 public 以允许轻松序列化为 json。
 type PushContext struct {
 	proxyStatusMutex sync.RWMutex
 	// ProxyStatus is keyed by the error code, and holds a map keyed
@@ -283,6 +285,7 @@ type PushRequest struct {
 	// * Are not reported in standard metrics such as push time
 	// As a result, configuration updates should never be incremental. Generally, only EDS will set this, but
 	// in the future SDS will as well.
+	// 是否全量更新
 	Full bool
 
 	// ConfigsUpdated keeps track of configs that have changed.
@@ -1030,7 +1033,7 @@ func (ps *PushContext) updateContext(
 	oldPushContext *PushContext,
 	pushReq *PushRequest) error {
 	var servicesChanged, virtualServicesChanged, destinationRulesChanged, gatewayChanged,
-		authnChanged, authzChanged, envoyFiltersChanged, sidecarsChanged, telemetryChanged bool
+	authnChanged, authzChanged, envoyFiltersChanged, sidecarsChanged, telemetryChanged bool
 
 	for conf := range pushReq.ConfigsUpdated {
 		switch conf.Kind {

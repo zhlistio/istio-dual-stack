@@ -23,6 +23,7 @@ import (
 )
 
 func main() {
+	// 版本标识
 	version.Info.Version = binversion.OperatorVersionString
 	rootCmd := mesh.GetRootCmd(os.Args[1:])
 	if err := rootCmd.Execute(); err != nil {

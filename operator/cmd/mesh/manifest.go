@@ -21,6 +21,7 @@ import (
 )
 
 // ManifestCmd is a group of commands related to manifest generation, installation, diffing and migration.
+// ManifestCmd 是一组清单生成、安装、对比和迁移相关的命令行工具。
 func ManifestCmd(logOpts *log.Options) *cobra.Command {
 	mc := &cobra.Command{
 		Use:   "manifest",
@@ -28,13 +29,22 @@ func ManifestCmd(logOpts *log.Options) *cobra.Command {
 		Long:  "The manifest command generates and diffs Istio manifests.",
 	}
 
+	// generate 参数
 	mgcArgs := &manifestGenerateArgs{}
+
+	// manifest 参数
 	mdcArgs := &manifestDiffArgs{}
 
+	// root 参数
 	args := &rootArgs{}
 
+	// 生成要安装部署 istio 的配置文件
 	mgc := manifestGenerateCmd(args, mgcArgs, logOpts)
+
+	// diff 查看两个文件或者目录的异同
 	mdc := manifestDiffCmd(args, mdcArgs)
+
+	// istioctl manifest install 命令安装集群
 	ic := InstallCmd(logOpts)
 
 	addFlags(mc, args)

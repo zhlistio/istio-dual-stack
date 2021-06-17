@@ -34,6 +34,7 @@ type IstioControlPlane struct {
 }
 
 // NewIstioControlPlane creates a new IstioControlPlane and returns a pointer to it.
+// NewIstioControlPlane 创建一个新的 IstioControlPlane 并返回一个指向它的指针。
 func NewIstioControlPlane(installSpec *v1alpha1.IstioOperatorSpec, translator *translate.Translator) (*IstioControlPlane, error) {
 	out := &IstioControlPlane{}
 	opts := &component.Options{
@@ -84,6 +85,7 @@ func defaultIfEmpty(val, dflt string) string {
 // Run starts the Istio control plane.
 func (i *IstioControlPlane) Run() error {
 	for _, c := range i.components {
+		// 启动 istio 控制面各个组件
 		if err := c.Run(); err != nil {
 			return err
 		}

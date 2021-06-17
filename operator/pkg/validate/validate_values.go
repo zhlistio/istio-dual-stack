@@ -44,6 +44,7 @@ func CheckValues(root interface{}) util.Errors {
 }
 
 // ValuesValidate validates the values of the tree using the supplied Func
+// ValuesValidate 使用提供的功能验证传递的参数的值
 func ValuesValidate(validations map[string]ValidatorFunc, node interface{}, path util.Path) (errs util.Errors) {
 	pstr := path.String()
 	scope.Debugf("ValuesValidate %s", pstr)

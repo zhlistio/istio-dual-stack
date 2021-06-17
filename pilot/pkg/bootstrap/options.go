@@ -37,9 +37,13 @@ type RegistryOptions struct {
 	Registries []string
 
 	// Kubernetes controller options
+	// k8s controller 选项
+	// TODO 记录到这里
 	KubeOptions kubecontroller.Options
+
 	// ClusterRegistriesNamespace specifies where the multi-cluster secret resides
 	ClusterRegistriesNamespace string
+
 	KubeConfig                 string
 
 	// DistributionTracking control
@@ -50,6 +54,7 @@ type RegistryOptions struct {
 }
 
 // PilotArgs provides all of the configuration parameters for the Pilot discovery service.
+// PilotArgs 为 Pilot 发现服务提供所有配置参数。
 type PilotArgs struct {
 	ServerOptions      DiscoveryServerOptions
 	InjectionOptions   InjectionOptions
@@ -67,6 +72,7 @@ type PilotArgs struct {
 }
 
 // DiscoveryServerOptions contains options for create a new discovery server instance.
+// DiscoveryServerOptions 包含用于创建 discovery server 实例的配置选项。
 type DiscoveryServerOptions struct {
 	// The listening address for HTTP (debug). If the port in the address is empty or "0" (as in "127.0.0.1:" or "[::1]:0")
 	// a port number is automatically chosen.

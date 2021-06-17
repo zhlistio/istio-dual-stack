@@ -52,6 +52,7 @@ type sdsservice struct {
 var _ model.XdsResourceGenerator = &sdsservice{}
 
 func NewXdsServer(stop chan struct{}, gen model.XdsResourceGenerator) *xds.DiscoveryServer {
+	// 初始化 xds
 	s := xds.NewXDS(stop)
 	s.DiscoveryServer.Generators = map[string]model.XdsResourceGenerator{
 		v3.SecretType: gen,
@@ -92,6 +93,7 @@ func newSDSService(st security.SecretManager, options *security.Options) *sdsser
 		st:   st,
 		stop: make(chan struct{}),
 	}
+	// 初始化 xds server 地址
 	ret.XdsServer = NewXdsServer(ret.stop, ret)
 
 	if options.FileMountedCerts {

@@ -53,7 +53,9 @@ func (c *ServiceController) Run(<-chan struct{}) {}
 func (c *ServiceController) HasSynced() bool { return true }
 
 // ServiceDiscovery is a mock discovery interface
+// ServiceDiscovery 是一个模拟服务发现接口
 type ServiceDiscovery struct {
+	// TODO 记录下，测试到这里
 	services        map[host.Name]*model.Service
 	networkGateways map[string][]*model.Gateway
 	// EndpointShards table. Key is the fqdn of the service, ':', port

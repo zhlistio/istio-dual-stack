@@ -53,6 +53,7 @@ func profileDiffCmd(rootArgs *rootArgs, pfArgs *profileDiffArgs) *cobra.Command 
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// 比较两个文件的内容
 			isdifferent, err := profileDiff(cmd, rootArgs, pfArgs, args)
 			if err != nil {
 				return err
@@ -68,7 +69,6 @@ func profileDiffCmd(rootArgs *rootArgs, pfArgs *profileDiffArgs) *cobra.Command 
 // profileDiff compare two profile files.
 func profileDiff(cmd *cobra.Command, rootArgs *rootArgs, pfArgs *profileDiffArgs, args []string) (bool, error) {
 	initLogsOrExit(rootArgs)
-
 	l := clog.NewConsoleLogger(os.Stdout, os.Stderr, nil)
 	setFlags := []string{fmt.Sprintf("installPackagePath=%s", pfArgs.manifestsPath)}
 	return profileDiffInternal(args[0], args[1], setFlags, cmd.OutOrStdout(), l)

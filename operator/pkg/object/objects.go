@@ -259,6 +259,7 @@ func ParseK8sObjectsFromYAMLManifest(manifest string) (K8sObjects, error) {
 
 // ParseK8sObjectsFromYAMLManifestFailOption returns a K8sObjects representation of manifest. Continues parsing when a bad object
 // is found if failOnError is set to false.
+// ParseK8sObjectsFromYAMLManifestFailOption 返回清单的 K8sObjects。 如果 failOnError 设置为 false，则在发现坏对象时继续解析。
 func ParseK8sObjectsFromYAMLManifestFailOption(manifest string, failOnError bool) (K8sObjects, error) {
 	var b bytes.Buffer
 

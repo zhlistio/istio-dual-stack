@@ -53,6 +53,7 @@ var installerScope = log.RegisterScope("installer", "installer", 0)
 // supplied logger.
 func GenManifests(inFilename []string, setFlags []string, force bool,
 	kubeConfig *rest.Config, l clog.Logger) (name.ManifestMap, *iopv1alpha1.IstioOperator, error) {
+	// 获取安装合并的 IOP yaml 文件
 	mergedYAML, _, err := GenerateConfig(inFilename, setFlags, force, kubeConfig, l)
 	if err != nil {
 		return nil, nil, err
@@ -64,10 +65,12 @@ func GenManifests(inFilename []string, setFlags []string, force bool,
 
 	t := translate.NewTranslator()
 
+	// NewIstioControlPlane 创建一个新的 IstioControlPlane 并返回他的地址
 	cp, err := controlplane.NewIstioControlPlane(mergedIOPS.Spec, t)
 	if err != nil {
 		return nil, nil, err
 	}
+	// Run 启动 Istio 控制平面
 	if err := cp.Run(); err != nil {
 		return nil, nil, err
 	}
@@ -76,6 +79,7 @@ func GenManifests(inFilename []string, setFlags []string, force bool,
 	if errs != nil {
 		return manifests, mergedIOPS, errs.ToError()
 	}
+	// 解析各种 manifest 目录下的文件，以及合并后的 IOP 文件
 	return manifests, mergedIOPS, nil
 }
 
@@ -174,6 +178,7 @@ func GenIOPFromProfile(profileOrPath, fileOverlayYAML string, setFlags []string,
 		return "", nil, err
 	}
 	t := translate.NewReverseTranslator()
+	// spec.values 的 k8s 资源配置信息转换成 Istio Operator 资源
 	overlayYAML, err = t.TranslateK8SfromValueToIOP(overlayYAML)
 	if err != nil {
 		return "", nil, fmt.Errorf("could not overlay k8s settings from values to IOP: %s", err)
@@ -227,6 +232,7 @@ func ReadYamlProfile(inFilenames []string, setFlags []string, force bool, l clog
 		profile = fp
 	}
 	// The profile coming from --set flag has the highest precedence.
+	// 命令行的参数拥有最高级别选项
 	psf := GetValueForSetFlag(setFlags, "profile")
 	if psf != "" {
 		profile = psf
@@ -245,6 +251,7 @@ func ParseYAMLFiles(inFilenames []string, force bool, l clog.Logger) (overlayYAM
 		return "", "", err
 	}
 	var fileOverlayIOP *iopv1alpha1.IstioOperator
+	// 校验 Istio Operator yaml 文件是否正确
 	fileOverlayIOP, err = validate.UnmarshalIOP(y)
 	if err != nil {
 		return "", "", err
@@ -268,6 +275,7 @@ func ReadLayeredYAMLs(filenames []string) (string, error) {
 	return readLayeredYAMLs(filenames, os.Stdin)
 }
 
+// 解析传递的 YAML 文件参数
 func readLayeredYAMLs(filenames []string, stdinReader io.Reader) (string, error) {
 	var ly string
 	var stdin bool
@@ -286,6 +294,7 @@ func readLayeredYAMLs(filenames []string, stdinReader io.Reader) (string, error)
 		if err != nil {
 			return "", err
 		}
+		// TODO 这个效率是不是有点问题？
 		ly, err = util.OverlayIOP(ly, string(b))
 		if err != nil {
 			return "", err
@@ -323,6 +332,7 @@ func GetMergedIOP(userIOPStr, profile, manifestsPath, revision, kubeConfigPath, 
 }
 
 // validateSetFlags validates that setFlags all have path=value format.
+// validateSetFlags 验证 setFlags 参数都具有 path=value 格式。
 func validateSetFlags(setFlags []string) error {
 	for _, sf := range setFlags {
 		pv := strings.Split(sf, "=")

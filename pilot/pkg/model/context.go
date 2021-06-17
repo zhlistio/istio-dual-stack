@@ -50,11 +50,14 @@ var (
 )
 
 // Environment provides an aggregate environmental API for Pilot
+// Environment 为 Pilot 提供了聚合 ADS 环境变量配置的 API
 type Environment struct {
 	// Discovery interface for listing services and instances.
+	// 用于列出服务和实例的发现接口。
 	ServiceDiscovery
 
 	// Config interface for listing routing rules
+	// 用于列出路由规则的配置接口
 	IstioConfigStore
 
 	// Watcher is the watcher for the mesh config (to be merged into the config store)
@@ -99,6 +102,7 @@ func (e *Environment) GetDiscoveryAddress() (host.Name, string, error) {
 	if e.Mesh().DefaultConfig != nil {
 		proxyConfig = *e.Mesh().DefaultConfig
 	}
+	// 分割 pilot discovery 的地址
 	hostname, port, err := net.SplitHostPort(proxyConfig.DiscoveryAddress)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid Istiod Address: %s, %v", proxyConfig.DiscoveryAddress, err)
@@ -217,6 +221,7 @@ type Proxy struct {
 	ConfigNamespace string
 
 	// Metadata key-value pairs extending the Node identifier
+	// 扩展 Node 标识符的元数据键值对
 	Metadata *NodeMetadata
 
 	// the sidecarScope associated with the proxy

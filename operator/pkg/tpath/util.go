@@ -45,6 +45,7 @@ func GetSpecSubtree(yml string) (string, error) {
 }
 
 // GetConfigSubtree returns the subtree at the given path.
+// GetConfigSubtree 返回给定路径的子树。
 func GetConfigSubtree(manifest, path string) (string, error) {
 	root := make(map[string]interface{})
 	if err := yaml2.Unmarshal([]byte(manifest), &root); err != nil {

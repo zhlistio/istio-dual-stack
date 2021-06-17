@@ -306,6 +306,7 @@ func FilterManifest(ms string, selectResources string, ignoreResources string) (
 }
 
 // renameResource filter the input resources with selected and ignored filter.
+// renameResource 使用选定和忽略的过滤文件过滤输入资源。
 func renameResource(iom map[string]*object.K8sObject, rnm map[string]string) (map[string]*object.K8sObject, error) {
 	oom := make(map[string]*object.K8sObject)
 	for name, obj := range iom {

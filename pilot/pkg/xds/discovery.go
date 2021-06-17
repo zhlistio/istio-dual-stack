@@ -67,11 +67,14 @@ type debounceOptions struct {
 }
 
 // DiscoveryServer is Pilot's gRPC implementation for Envoy's xds APIs
+// DiscoveryServer 是 Pilot 对 Envoy 的 xds API 的 gRPC 实现
 type DiscoveryServer struct {
 	// Env is the model environment.
+	// Env 环境基本配置信息
 	Env *model.Environment
 
 	// MemRegistry is used for debug and load testing, allow adding services. Visible for testing.
+	// 内存注册配置信息
 	MemRegistry *memory.ServiceDiscovery
 
 	// ConfigGenerator is responsible for generating data plane configuration using Istio networking
@@ -166,6 +169,7 @@ type EndpointShards struct {
 }
 
 // NewDiscoveryServer creates DiscoveryServer that sources data from Pilot's internal mesh data structures
+// NewDiscoveryServer 创建 DiscoveryServer，从 Pilot 的内部网格数据结构中获取数据
 func NewDiscoveryServer(env *model.Environment, plugins []string, instanceID string, systemNameSpace string) *DiscoveryServer {
 	out := &DiscoveryServer{
 		Env:                     env,

@@ -114,6 +114,7 @@ func yamlToPrettyJSON(yml string) (string, error) {
 }
 
 func profileDump(args []string, rootArgs *rootArgs, pdArgs *profileDumpArgs, l clog.Logger) error {
+	// 初始化日志
 	initLogsOrExit(rootArgs)
 
 	if len(args) == 1 && pdArgs.inFilenames != nil {
@@ -131,6 +132,7 @@ func profileDump(args []string, rootArgs *rootArgs, pdArgs *profileDumpArgs, l c
 		setFlags = append(setFlags, "profile="+args[0])
 	}
 
+	//
 	y, _, err := manifest.GenerateConfig(pdArgs.inFilenames, setFlags, true, nil, l)
 	if err != nil {
 		return err
@@ -171,6 +173,7 @@ func profileDump(args []string, rootArgs *rootArgs, pdArgs *profileDumpArgs, l c
 }
 
 // Convert the generated YAML to --set flags
+// Convert 转换 YAML 到 --set flags 参数
 func yamlToFlags(yml string) ([]string, error) {
 	// YAML objects are not completely compatible with JSON
 	// objects. Let yaml.YAMLToJSON handle the edge cases and

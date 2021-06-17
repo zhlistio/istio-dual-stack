@@ -61,6 +61,75 @@ func addManifestGenerateFlags(cmd *cobra.Command, args *manifestGenerateArgs) {
 	cmd.PersistentFlags().StringSliceVar(&args.components, "component", nil, ComponentFlagHelpStr)
 }
 
+// 该命令行就是生成一堆的配置文件
+// CRD
+// authorizationpolicies.security.istio.io
+// destinationrules.networking.istio.io
+// envoyfilters.networking.istio.io
+// gateways.networking.istio.io
+// istiooperators.install.istio.io
+// peerauthentications.security.istio.io
+// requestauthentications.security.istio.io
+// serviceentries.networking.istio.io
+// sidecars.networking.istio.io
+// virtualservices.networking.istio.io
+// workloadentries.networking.istio.io
+// workloadgroups.networking.istio.io
+
+// ServiceAccount
+// istio-ingressgateway-service-account
+// istio-reader-service-account
+// istiod-service-account
+
+// ClusterRole
+// istio-reader-istio-system
+// istiod-istio-system
+
+// ClusterRoleBinding
+// istio-reader-istio-system
+// istiod-istio-system
+
+// WebhookConfiguration
+// istiod-istio-system
+// istio-sidecar-injector
+
+// EnvoyFilter
+// metadata-exchange-1.8
+// metadata-exchange-1.9
+// stats-filter-1.8
+// stats-filter-1.9
+// tcp-metadata-exchange-1.8
+// tcp-metadata-exchange-1.9
+// tcp-stats-filter-1.8
+// tcp-stats-filter-1.9
+
+// ConfigMap
+// istio
+// istio-sidecar-injector
+
+// Deployment
+// istio-ingressgateway
+// istiod
+
+// PodDisruptionBudget
+// istio-ingressgateway
+// istiod
+
+// Role
+// istio-ingressgateway-sds
+// istiod-istio-system
+
+// RoleBinding
+// istio-ingressgateway-sds
+// istiod-istio-system
+
+// HorizontalPodAutoscaler
+// istio-ingressgateway
+// istiod
+
+// Service
+// istio-ingressgateway
+// istiod
 func manifestGenerateCmd(rootArgs *rootArgs, mgArgs *manifestGenerateArgs, logOpts *log.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "generate",
@@ -97,6 +166,7 @@ func manifestGenerate(args *rootArgs, mgArgs *manifestGenerateArgs, logopts *log
 		return fmt.Errorf("could not configure logs: %s", err)
 	}
 
+	// 文件清单
 	manifests, _, err := manifest.GenManifests(mgArgs.inFilename, applyFlagAliases(mgArgs.set, mgArgs.manifestsPath, mgArgs.revision), mgArgs.force, nil, l)
 	if err != nil {
 		return err

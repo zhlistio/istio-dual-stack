@@ -44,7 +44,6 @@ type operatorInitArgs struct {
 
 func addOperatorInitFlags(cmd *cobra.Command, args *operatorInitArgs) {
 	hub, tag := buildversion.DockerInfo.Hub, buildversion.DockerInfo.Tag
-
 	cmd.PersistentFlags().StringVarP(&args.inFilename, "filename", "f", "", filenameFlagHelpStr)
 	cmd.PersistentFlags().StringVarP(&args.kubeConfigPath, "kubeconfig", "c", "", KubeConfigFlagHelpStr)
 	cmd.PersistentFlags().StringVar(&args.context, "context", "", ContextFlagHelpStr)
@@ -79,7 +78,9 @@ func operatorInitCmd(rootArgs *rootArgs, oiArgs *operatorInitArgs) *cobra.Comman
 }
 
 // operatorInit installs the Istio operator controller into the cluster.
+// operatorInit 在 istio 集群安装 Istio Operator 控制器
 func operatorInit(args *rootArgs, oiArgs *operatorInitArgs, l clog.Logger) {
+	// 初始化日志
 	initLogsOrExit(args)
 
 	restConfig, clientset, client, err := K8sConfig(oiArgs.kubeConfigPath, oiArgs.context)
@@ -139,6 +140,7 @@ func operatorInit(args *rootArgs, oiArgs *operatorInitArgs, l clog.Logger) {
 		}
 	}
 
+	// istioctl operator init
 	if err := applyManifest(restConfig, client, mstr, name.IstioOperatorComponentName, opts, iop, l); err != nil {
 		l.LogAndFatal(err)
 	}

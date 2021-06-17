@@ -124,6 +124,7 @@ func applyOverlay(current, overlay *unstructured.Unstructured) error {
 
 	overlayUpdated := overlay.DeepCopy()
 	if strings.EqualFold(current.GetKind(), "service") {
+
 		if err := saveClusterIP(current, overlayUpdated); err != nil {
 			return err
 		}

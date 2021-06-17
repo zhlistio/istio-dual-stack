@@ -91,6 +91,7 @@ func ReadProfileYAML(profile, manifestsPath string) (string, error) {
 }
 
 // renderChart renders the given chart with the given values and returns the resulting YAML manifest string.
+// 将参数值赋予模板
 func renderChart(namespace, values string, chrt *chart.Chart, filterFunc TemplateFilterFunc) (string, error) {
 	options := chartutil.ReleaseOptions{
 		Name:      "istio",

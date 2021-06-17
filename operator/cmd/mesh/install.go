@@ -163,6 +163,7 @@ func runApplyCmd(cmd *cobra.Command, rootArgs *rootArgs, iArgs *installArgs, log
 		return err
 	}
 
+	// 解析 profile 与 开启的组件
 	profile, ns, enabledComponents, err := getProfileNSAndEnabledComponents(iop)
 	if err != nil {
 		return fmt.Errorf("failed to get profile, namespace or enabled components: %v", err)
@@ -186,6 +187,8 @@ func runApplyCmd(cmd *cobra.Command, rootArgs *rootArgs, iArgs *installArgs, log
 	if err := configLogs(logOpts); err != nil {
 		return fmt.Errorf("could not configure logs: %s", err)
 	}
+
+	// 调用 helmreconciler 同步资源的事件
 	iop, err = InstallManifests(iop, iArgs.force, rootArgs.dryRun, restConfig, client, iArgs.readinessTimeout, l)
 	if err != nil {
 		return fmt.Errorf("failed to install manifests: %v", err)
@@ -193,6 +196,7 @@ func runApplyCmd(cmd *cobra.Command, rootArgs *rootArgs, iArgs *installArgs, log
 
 	// Workaround for broken validation with revisions (https://github.com/istio/istio/issues/28880)
 	// TODO(Monkeyanator) remove once we have a nicer solution
+	// 自动创建一个 istiod service
 	if iArgs.revision != "" {
 		if requiresIstiodServiceCreation(clientset, name.IstioDefaultNamespace) {
 			if err := createIstiodService(clientset, name.IstioDefaultNamespace); err != nil {
@@ -237,6 +241,7 @@ func InstallManifests(iop *v1alpha12.IstioOperator, force bool, dryRun bool, res
 		DryRun: dryRun, Log: l, WaitTimeout: waitTimeout, ProgressLog: progress.NewLog(),
 		Force: force,
 	}
+	// 创建 helmreconciler 同步实例
 	reconciler, err := helmreconciler.NewHelmReconciler(client, restConfig, iop, opts)
 	if err != nil {
 		return iop, err
@@ -278,6 +283,7 @@ func savedIOPName(iop *v1alpha12.IstioOperator) string {
 
 // DetectIstioVersionDiff will show warning if istioctl version and control plane version are different
 // nolint: interfacer
+// DetectIstioVersionDiff 将会在 istioctl 版本跟控制面版本不一致的情况下抛出警告
 func DetectIstioVersionDiff(cmd *cobra.Command, tag string, ns string, kubeClient kube.ExtendedClient, setFlags []string) error {
 	warnMarker := color.New(color.FgYellow).Add(color.Italic).Sprint("WARNING:")
 	icps, err := kubeClient.GetIstioVersions(context.TODO(), ns)
@@ -401,6 +407,7 @@ func requiresIstiodServiceCreation(cs kubernetes.Interface, istioNs string) bool
 }
 
 // createIstiodService creates an `istiod` service that selects ALL istiod instances.
+// createIstiodService 创建一个匹配所有 istiod 实例的 istiod service
 func createIstiodService(cs kubernetes.Interface, istioNs string) error {
 	const (
 		pilotDiscoveryChart = "istio-control/istio-discovery"

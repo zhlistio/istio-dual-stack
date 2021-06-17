@@ -52,6 +52,7 @@ import (
 // E.g., in kubernetes, a service foo is associated with
 // foo.default.svc.cluster.local hostname, has a virtual IP of 10.0.1.1 and
 // listens on ports 80, 8080
+// Istio 所管理的服务的基本配置信息
 type Service struct {
 	// Attributes contains additional attributes associated with the service
 	// used mostly by RBAC for policy enforcement purposes.

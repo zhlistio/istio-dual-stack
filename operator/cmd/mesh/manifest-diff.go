@@ -111,6 +111,7 @@ func manifestDiffCmd(rootArgs *rootArgs, diffArgs *manifestDiffArgs) *cobra.Comm
 }
 
 // compareManifestsFromFiles compares two manifest files
+// compareManifestsFromFiles 比较两个文件的差异
 func compareManifestsFromFiles(rootArgs *rootArgs, args []string, verbose bool,
 	renameResources, selectResources, ignoreResources string) (bool, error) {
 	initLogsOrExit(rootArgs)
@@ -143,6 +144,7 @@ func yamlFileFilter(path string) bool {
 }
 
 // compareManifestsFromDirs compares manifests from two directories
+// compareManifestsFromDirs 比较目录中存在的文件的差异
 func compareManifestsFromDirs(rootArgs *rootArgs, verbose bool, dirName1, dirName2,
 	renameResources, selectResources, ignoreResources string) (bool, error) {
 	initLogsOrExit(rootArgs)

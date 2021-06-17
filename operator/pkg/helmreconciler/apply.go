@@ -39,6 +39,7 @@ const fieldOwnerOperator = "istio-operator"
 
 // ApplyManifest applies the manifest to create or update resources. It returns the processed (created or updated)
 // objects and the number of objects in the manifests.
+// ApplyManifest 根据应用清单来创建或更新资源。它返回已处理（创建或更新）的对象和清单中的对象数量。
 func (h *HelmReconciler) ApplyManifest(manifest name.Manifest, serverSideApply bool) (object.K8sObjects, int, error) {
 	var processedObjects object.K8sObjects
 	var deployedObjects int
@@ -132,6 +133,7 @@ func (h *HelmReconciler) ApplyManifest(manifest name.Manifest, serverSideApply b
 			return processedObjects, 0, errs.ToError()
 		}
 
+		// 等待资源创建或者删除
 		err := WaitForResources(processedObjects, h.restConfig, h.clientSet,
 			h.opts.WaitTimeout, h.opts.DryRun, plog)
 		if err != nil {

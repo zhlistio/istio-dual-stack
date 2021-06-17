@@ -46,6 +46,7 @@ func profileListCmd(rootArgs *rootArgs, plArgs *profileListArgs) *cobra.Command 
 
 // profileList list all the builtin profiles.
 func profileList(cmd *cobra.Command, args *rootArgs, plArgs *profileListArgs) error {
+	// 初始日志
 	initLogsOrExit(args)
 	profiles, err := helm.ListProfiles(plArgs.manifestsPath)
 	if err != nil {

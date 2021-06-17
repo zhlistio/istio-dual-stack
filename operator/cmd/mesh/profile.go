@@ -28,9 +28,13 @@ func ProfileCmd() *cobra.Command {
 			"istioctl install --set profile=demo  # Use a profile from the list",
 	}
 
+	// profile dump 初始参数
 	pdArgs := &profileDumpArgs{}
+	// profile list 参数
 	plArgs := &profileListArgs{}
+	// profile diff 参数
 	pdfArgs := &profileDiffArgs{}
+	// 项目根参数
 	args := &rootArgs{}
 
 	plc := profileListCmd(args, plArgs)

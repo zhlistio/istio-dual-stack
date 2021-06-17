@@ -67,7 +67,6 @@ func configLogs(opt *log.Options) error {
 	opt2 := *opt
 	opt2.OutputPaths = op
 	opt2.ErrorOutputPaths = op
-
 	return log.Configure(&opt2)
 }
 
@@ -208,6 +207,7 @@ func applyManifest(restConfig *rest.Config, client client.Client, manifestStr st
 
 // --manifests is an alias for --set installPackagePath=
 // --revision is an alias for --set revision=
+// 参数别名配置
 func applyFlagAliases(flags []string, manifestsPath, revision string) []string {
 	if manifestsPath != "" {
 		flags = append(flags, fmt.Sprintf("installPackagePath=%s", manifestsPath))
@@ -224,6 +224,7 @@ func getCRAndNamespaceFromFile(filePath string, l clog.Logger) (customResource s
 		return "", "", nil
 	}
 
+	// 经过各种验证，得到最终的 IOP 对象
 	_, mergedIOPS, err := manifest.GenerateConfig([]string{filePath}, nil, false, nil, l)
 	if err != nil {
 		return "", "", err

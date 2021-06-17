@@ -201,6 +201,7 @@ type telemetryV2Config struct {
 var iopMergeStruct iopMergeStructType
 
 // OverlayIOP overlays over base using JSON strategic merge.
+// OverlayIOP 使用 JSON 策略合并策略合并两个 YAML 文件。
 func OverlayIOP(base, overlay string) (string, error) {
 	if strings.TrimSpace(base) == "" {
 		return overlay, nil

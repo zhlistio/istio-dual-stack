@@ -68,14 +68,18 @@ type DiscoveryClient = discovery.AggregatedDiscoveryService_StreamAggregatedReso
 type DeltaDiscoveryClient = discovery.AggregatedDiscoveryService_DeltaAggregatedResourcesClient
 
 // Connection holds information about connected client.
+// 连接客户端的信息
 type Connection struct {
 	// PeerAddr is the address of the client, from network layer.
+	// 客户端的地址信息
 	PeerAddr string
 
 	// Defines associated identities for the connection
+	//
 	Identities []string
 
 	// Time of connection, for debugging
+	// 连接的时间
 	Connect time.Time
 
 	// ConID is the connection identifier, used as a key in the connection table.
@@ -90,6 +94,7 @@ type Connection struct {
 
 	// Both ADS and SDS streams implement this interface
 	stream DiscoveryStream
+
 	// deltaStream is used for Delta XDS. Only one of deltaStream or stream will be set
 	deltaStream DeltaDiscoveryStream
 

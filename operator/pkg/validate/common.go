@@ -271,6 +271,7 @@ func anchored(res ...*regexp.Regexp) *regexp.Regexp {
 type ValidatorFunc func(path util.Path, i interface{}) util.Errors
 
 // UnmarshalIOP unmarshals a string containing IstioOperator as YAML.
+// UnmarshalIOP 将包含 IstioOperator 的字符串解析为 YAML 文件格式。
 func UnmarshalIOP(iopYAML string) (*v1alpha1.IstioOperator, error) {
 	// Remove creationDate (util.UnmarshalWithJSONPB fails if present)
 	mapIOP := make(map[string]interface{})

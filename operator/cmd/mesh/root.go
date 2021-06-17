@@ -81,12 +81,17 @@ func GetRootCmd(args []string) *cobra.Command {
 	rootCmd.SetArgs(args)
 	rootCmd.PersistentFlags().AddGoFlagSet(flag.CommandLine)
 
+	// istioctl manifest
 	rootCmd.AddCommand(ManifestCmd(log.DefaultOptions()))
+	// istioctl install
 	rootCmd.AddCommand(InstallCmd(log.DefaultOptions()))
+	// istioctl profile  diff、dump、list
 	rootCmd.AddCommand(ProfileCmd())
+	// istioctl operator
 	rootCmd.AddCommand(OperatorCmd())
+	//
 	rootCmd.AddCommand(version.CobraCommand())
+	//
 	rootCmd.AddCommand(UpgradeCmd())
-
 	return rootCmd
 }

@@ -19,6 +19,7 @@ import (
 )
 
 // OperatorCmd is a group of commands related to installation and management of the operator controller.
+// OperatorCmd 是一组 operator 控制器的安装和管理相关的命令。
 func OperatorCmd() *cobra.Command {
 	oc := &cobra.Command{
 		Use:   "operator",
@@ -31,8 +32,11 @@ func OperatorCmd() *cobra.Command {
 	orArgs := &operatorRemoveArgs{}
 	args := &rootArgs{}
 
+	// dump cmd
 	odc := operatorDumpCmd(args, odArgs)
+	// init cmd
 	oic := operatorInitCmd(args, oiArgs)
+	// remove cmd
 	orc := operatorRemoveCmd(args, orArgs)
 
 	addFlags(odc, args)

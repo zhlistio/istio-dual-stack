@@ -327,6 +327,7 @@ func (t *ReverseTranslator) translateGateway(valueSpec map[string]interface{}, r
 // TranslateK8SfromValueToIOP use reverse translation to convert k8s settings defined in values API to IOP API.
 // this ensures that user overlays that set k8s through spec.values
 // are not overridden by spec.components.X.k8s settings in the base profiles
+// values 的 k8s 资源配置信息转换成 Istio Operator 资源
 func (t *ReverseTranslator) TranslateK8SfromValueToIOP(userOverlayYaml string) (string, error) {
 	valuesOverlay, err := tpath.GetConfigSubtree(userOverlayYaml, "spec.values")
 	if err != nil {

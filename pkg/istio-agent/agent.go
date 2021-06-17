@@ -81,13 +81,13 @@ type Agent struct {
 	proxyConfig *mesh.ProxyConfig
 
 	// agent 的配置信息
-	cfg     *AgentOptions
+	cfg *AgentOptions
 
 	// security 的配置信息
 	secOpts *security.Options
 
 	// sds server 的配置信息
-	sdsServer   *sds.Server
+	sdsServer *sds.Server
 
 	// secret 证书的管理器
 	secretCache *cache.SecretManagerClient
@@ -159,7 +159,7 @@ func NewAgent(proxyConfig *mesh.ProxyConfig, agentOpts *AgentOptions, sopts *sec
 
 // Simplified SDS setup. This is called if and only if user has explicitly mounted a K8S JWT token, and is not
 // using a hostPath mounted or external SDS server.
-// 简化的 SDS 的安装。当且仅当用户显式挂载 K8S JWT 令牌且未使用已挂载的 hostPath 或外部 SDS 服务器时，才会调用此方法。
+// 简化 SDS 安装。当且仅当用户显式挂载 K8S JWT 令牌且未使用已挂载的 hostPath 或外部 SDS 服务器时，才会调用此方法。
 // 1. External CA: requires authenticating the trusted JWT AND validating the SAN against the JWT.
 //  For example Google CA
 // 外部 CA：需要验证受信任的 JWT 并根据 JWT 验证 SAN。 例如谷歌 CA
@@ -167,13 +167,13 @@ func NewAgent(proxyConfig *mesh.ProxyConfig, agentOpts *AgentOptions, sopts *sec
 // 间接，使用 istiod：使用 K8S 证书。
 func (a *Agent) Start() error {
 	var err error
+	// newSecretManager 为工作负载密钥创建密钥管理器
 	a.secretCache, err = a.newSecretManager()
 	if err != nil {
 		return fmt.Errorf("failed to start workload secret manager %v", err)
 	}
 
 	// 初始化 sds server
-	// TODO 记录下这里
 	a.sdsServer, err = sds.NewServer(a.secOpts, a.secretCache)
 	if err != nil {
 		return fmt.Errorf("failed to start local sds server %v", err)
