@@ -428,11 +428,14 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	}
 
 	// Watch for changes to primary resource IstioOperator
+	// 注意主要资源 IstioOperator 的变更
 	err = c.Watch(&source.Kind{Type: &iopv1alpha1.IstioOperator{}}, &handler.EnqueueRequestForObject{}, operatorPredicates)
 	if err != nil {
 		return err
 	}
+
 	// watch for changes to Istio resources
+	// watch Istio 资源变更
 	err = watchIstioResources(c)
 	if err != nil {
 		return err

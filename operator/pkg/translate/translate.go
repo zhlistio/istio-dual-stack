@@ -760,6 +760,7 @@ func createPatchObjectFromPath(node interface{}, path util.Path) (map[string]int
 }
 
 // IOPStoIOP takes an IstioOperatorSpec and returns a corresponding IstioOperator with the given name and namespace.
+// IOPStoIOP 采用 IstioOperatorSpec 并返回具有给定名称和命名空间的相应 IstioOperator。
 func IOPStoIOP(iops proto.Message, name, namespace string) (*iopv1alpha1.IstioOperator, error) {
 	iopStr, err := IOPStoIOPstr(iops, name, namespace)
 	if err != nil {

@@ -39,6 +39,7 @@ import (
 )
 
 // CommandParseError distinguishes an error parsing istioctl CLI arguments from an error processing
+// CommandParseError 辨别来自错误处理的 istioctl CLI 参数
 type CommandParseError struct {
 	e error
 }
@@ -79,6 +80,8 @@ var (
 )
 
 func defaultLogOptions() *log.Options {
+
+	// 返回默认的日志初始化参数
 	o := log.DefaultOptions()
 
 	// These scopes are, at the default "INFO" level, too chatty for command line use
@@ -138,6 +141,7 @@ func GetRootCmd(args []string) *cobra.Command {
 		Long: `Istio configuration command line utility for service operators to
 debug and diagnose their Istio mesh.
 `,
+		// 初始环境前进行检测
 		PersistentPreRunE: configureLogging,
 	}
 
@@ -156,7 +160,9 @@ debug and diagnose their Istio mesh.
 		"Config namespace")
 
 	// Attach the Istio logging options to the command.
+	// 将 Istio 日志记录选项附加到命令。
 	loggingOptions.AttachCobraFlags(rootCmd)
+
 	hiddenFlags := []string{
 		"log_as_json", "log_rotate", "log_rotate_max_age", "log_rotate_max_backups",
 		"log_rotate_max_size", "log_stacktrace_level", "log_target", "log_caller", "log_output_level",
@@ -168,7 +174,9 @@ debug and diagnose their Istio mesh.
 	cmd.AddFlags(rootCmd)
 
 	kubeInjectCmd := injectCommand()
+
 	hideInheritedFlags(kubeInjectCmd, "namespace")
+
 	rootCmd.AddCommand(kubeInjectCmd)
 
 	experimentalCmd := &cobra.Command{
@@ -297,6 +305,7 @@ debug and diagnose their Istio mesh.
 	return rootCmd
 }
 
+// 继承参数
 func hideInheritedFlags(orig *cobra.Command, hidden ...string) {
 	orig.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		for _, hidden := range hidden {
@@ -308,6 +317,7 @@ func hideInheritedFlags(orig *cobra.Command, hidden ...string) {
 	})
 }
 
+// 配置日志信息
 func configureLogging(_ *cobra.Command, _ []string) error {
 	if err := log.Configure(loggingOptions); err != nil {
 		return err
@@ -316,6 +326,7 @@ func configureLogging(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// 根据 kubernetes 的 config 返回命令空间
 func getDefaultNamespace(kubeconfig string) string {
 	configAccess := clientcmd.NewDefaultPathOptions()
 

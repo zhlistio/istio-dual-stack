@@ -25,6 +25,7 @@ import (
 )
 
 func main() {
+	// istioctl 命令行工具
 	if err := cmd.ConfigAndEnvProcessing(); err != nil {
 		fmt.Fprintf(os.Stderr, "Could not initialize: %v\n", err)
 		exitCode := cmd.GetExitCode(err)

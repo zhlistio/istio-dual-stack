@@ -78,6 +78,7 @@ func serverCmd() *cobra.Command {
 }
 
 // getWatchNamespace returns the namespace the operator should be watching for changes
+// getWatchNamespace 返回 operator 应该监听的 namespace 命名空间
 func getWatchNamespace() (string, error) {
 	ns, found := os.LookupEnv("WATCH_NAMESPACE")
 	if !found {

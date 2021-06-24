@@ -223,6 +223,7 @@ func createInterface(kubeconfig string) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(restConfig)
 }
 
+// 从 configmap 中获取 meshconfig 信息
 func getMeshConfigFromConfigMap(kubeconfig, command, revision string) (*meshconfig.MeshConfig, error) {
 	client, err := createInterface(kubeconfig)
 	if err != nil {
@@ -254,6 +255,7 @@ func getMeshConfigFromConfigMap(kubeconfig, command, revision string) (*meshconf
 }
 
 // grabs the raw values from the ConfigMap. These are encoded as JSON.
+// 从 configmap 中获取 values 信息
 func getValuesFromConfigMap(kubeconfig, revision string) (string, error) {
 	client, err := createInterface(kubeconfig)
 	if err != nil {
@@ -293,6 +295,7 @@ func readInjectConfigFile(f []byte) (inject.Templates, error) {
 	return cfg.Templates, err
 }
 
+// 从 configmap 中获取 inject config 配置信息
 func getInjectConfigFromConfigMap(kubeconfig, revision string) (inject.Templates, error) {
 	client, err := createInterface(kubeconfig)
 	if err != nil {
@@ -426,6 +429,7 @@ const (
 	defaultWebhookName             = "sidecar-injector.istio.io"
 )
 
+// 手动 sidecar 注入
 func injectCommand() *cobra.Command {
 	var opts clioptions.ControlPlaneOptions
 
@@ -469,6 +473,7 @@ kube-inject on deployments to get the most up-to-date changes.
     --valuesFile /tmp/values.json
 `,
 		RunE: func(c *cobra.Command, _ []string) (err error) {
+			// 验证参数
 			if err = validateFlags(); err != nil {
 				return err
 			}
@@ -554,12 +559,10 @@ kube-inject on deployments to get the most up-to-date changes.
 		"Injection configuration filename. Cannot be used with --injectConfigMapName")
 	injectCmd.PersistentFlags().StringVar(&valuesFile, "valuesFile", "",
 		"injection values configuration filename.")
-
 	injectCmd.PersistentFlags().StringVarP(&inFilename, "filename", "f",
 		"", "Input Kubernetes resource filename")
 	injectCmd.PersistentFlags().StringVarP(&outFilename, "output", "o",
 		"", "Modified output Kubernetes resource filename")
-
 	injectCmd.PersistentFlags().StringVar(&meshConfigMapName, "meshConfigMapName", defaultMeshConfigMapName,
 		fmt.Sprintf("ConfigMap name for Istio mesh configuration, key should be %q", configMapKey))
 	injectCmd.PersistentFlags().StringVar(&injectConfigMapName, "injectConfigMapName", defaultInjectConfigMapName,
@@ -568,5 +571,6 @@ kube-inject on deployments to get the most up-to-date changes.
 	injectCmd.PersistentFlags().StringVar(&whcName, "webhookConfig", defaultInjectWebhookConfigName,
 		"MutatingWebhookConfiguration name for Istio")
 	opts.AttachControlPlaneFlags(injectCmd)
+
 	return injectCmd
 }

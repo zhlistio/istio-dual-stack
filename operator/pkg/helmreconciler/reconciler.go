@@ -147,6 +147,7 @@ func initDependencies() map[name.ComponentName]chan struct{} {
 
 // Reconcile reconciles the associated resources.
 func (h *HelmReconciler) Reconcile() (*v1alpha1.InstallStatus, error) {
+	// 创建命名空间
 	if err := h.createNamespace(valuesv1alpha1.Namespace(h.iop.Spec), h.networkName()); err != nil {
 		return nil, err
 	}
@@ -155,6 +156,7 @@ func (h *HelmReconciler) Reconcile() (*v1alpha1.InstallStatus, error) {
 		return nil, err
 	}
 
+	// 等待各种资源的安装与部署状态
 	status := h.processRecursive(manifestMap)
 
 	h.opts.ProgressLog.SetState(progress.StatePruning)
@@ -165,6 +167,7 @@ func (h *HelmReconciler) Reconcile() (*v1alpha1.InstallStatus, error) {
 
 // processRecursive processes the given manifests in an order of dependencies defined in h. Dependencies are a tree,
 // where a child must wait for the parent to complete before starting.
+// processRecursive 按照 h 中定义的依赖关系顺序处理给定清单。依赖项是一棵树，项必须等待父项完成才能开始。
 func (h *HelmReconciler) processRecursive(manifests name.ManifestMap) *v1alpha1.InstallStatus {
 	componentStatus := make(map[string]*v1alpha1.InstallStatus_VersionStatus)
 
@@ -233,6 +236,7 @@ func (h *HelmReconciler) processRecursive(manifests name.ManifestMap) *v1alpha1.
 }
 
 // CheckSSAEnabled is a helper function to check whether ServerSideApply should be used when applying manifests.
+// CheckSSAEnabled 是一个工具类，用于检查在应用清单时是否应使用 ServerSideApply。
 func (h *HelmReconciler) CheckSSAEnabled() bool {
 	if h.restConfig != nil {
 		// check k8s minor version

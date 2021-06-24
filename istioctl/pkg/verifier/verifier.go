@@ -69,6 +69,7 @@ type StatusVerifier struct {
 // NewStatusVerifier creates a new instance of post-install verifier
 // which checks the status of various resources from the manifest.
 // TODO(su225): This is doing too many things. Refactor: break it down
+// NewStatusVerifier  post install 用于检查清单中各种资源的状态。
 func NewStatusVerifier(istioNamespace, manifestsPath, kubeconfig, context string,
 	filenames []string, controlPlaneOpts clioptions.ControlPlaneOptions,
 	logger clog.Logger, installedIOP *v1alpha1.IstioOperator) *StatusVerifier {
@@ -190,8 +191,7 @@ func (v *StatusVerifier) createClient() (kube.ExtendedClient, error) {
 }
 
 func (v *StatusVerifier) verifyFinalIOP() error {
-	crdCount, istioDeploymentCount, err := v.verifyPostInstallIstioOperator(
-		v.iop, fmt.Sprintf("IOP:%s", v.iop.GetName()))
+	crdCount, istioDeploymentCount, err := v.verifyPostInstallIstioOperator(v.iop, fmt.Sprintf("IOP:%s", v.iop.GetName()))
 	return v.reportStatus(crdCount, istioDeploymentCount, err)
 }
 

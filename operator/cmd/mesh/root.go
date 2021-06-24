@@ -89,9 +89,10 @@ func GetRootCmd(args []string) *cobra.Command {
 	rootCmd.AddCommand(ProfileCmd())
 	// istioctl operator
 	rootCmd.AddCommand(OperatorCmd())
-	//
+	// 添加 operator 版本
 	rootCmd.AddCommand(version.CobraCommand())
-	//
+	// 升级 istio 集群
 	rootCmd.AddCommand(UpgradeCmd())
+
 	return rootCmd
 }

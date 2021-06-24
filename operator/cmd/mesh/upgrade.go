@@ -132,6 +132,7 @@ func UpgradeCmd() *cobra.Command {
 }
 
 // upgrade is the main function for Upgrade command
+// 升级 istio
 func upgrade(rootArgs *rootArgs, args *upgradeArgs, l clog.Logger) (err error) {
 	// Create a kube client from args.kubeConfigPath and  args.context
 	kubeClient, err := NewClient(args.kubeConfigPath, args.context)
@@ -146,6 +147,7 @@ func upgrade(rootArgs *rootArgs, args *upgradeArgs, l clog.Logger) (err error) {
 		return err
 	}
 	setFlags := applyFlagAliases(args.set, args.manifestsPath, "")
+
 	// Generate IOPS parseObjectSetFromManifest
 	targetIOPYaml, targetIOP, err := manifest.GenerateConfig(args.inFilenames, setFlags, args.force, restConfig, l)
 	if err != nil {
@@ -153,6 +155,7 @@ func upgrade(rootArgs *rootArgs, args *upgradeArgs, l clog.Logger) (err error) {
 	}
 
 	// Get the target version from the tag in the IOPS
+	// 获取 istio 版本
 	targetTag := targetIOP.Spec.Tag
 	targetVersion, err := pkgversion.TagToVersionString(fmt.Sprint(targetTag))
 	if err != nil {
@@ -197,6 +200,7 @@ func upgrade(rootArgs *rootArgs, args *upgradeArgs, l clog.Logger) (err error) {
 	}
 
 	// Read the current installation's profile IOP yaml to check the changed profile settings between versions.
+	// 阅读当前安装的配置文件 IOP yaml 以检查版本之间更改的配置文件设置。
 	currentSets := args.set
 	if currentVersion != "" {
 		currentSets = append(currentSets, "installPackagePath="+releaseURLFromVersion(currentVersion))

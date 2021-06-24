@@ -96,6 +96,7 @@ var (
 	)
 )
 
+// 初始化指标
 func init() {
 	monitoring.MustRegister(k8sEvents)
 	monitoring.MustRegister(endpointsWithNoPods)

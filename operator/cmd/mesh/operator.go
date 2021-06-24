@@ -36,7 +36,7 @@ func OperatorCmd() *cobra.Command {
 	odc := operatorDumpCmd(args, odArgs)
 	// init cmd
 	oic := operatorInitCmd(args, oiArgs)
-	// remove cmd
+	// remove cmd 卸载 istio 以及 istio operator
 	orc := operatorRemoveCmd(args, orArgs)
 
 	addFlags(odc, args)
