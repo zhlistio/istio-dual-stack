@@ -898,7 +898,9 @@ message ProxyConfig {
   TypeMapStringInterface lifecycle = 36;
 
   // Controls if sidecar is injected at the front of the container list and blocks the start of the other containers until the proxy is ready
-  google.protobuf.BoolValue holdApplicationUntilProxyStarts = 37;
+  //
+  // Deprecated: replaced by ProxyConfig setting which allows per-pod configuration of this behavior.
+  google.protobuf.BoolValue holdApplicationUntilProxyStarts = 37 [deprecated=true];
 }
 
 // Specifies which tracer to use.
@@ -981,6 +983,19 @@ message SidecarInjectorConfig {
 
   // Configure the injection url for sidecar injector webhook
   string injectionURL = 22;
+
+  // Templates defines a set of custom injection templates that can be used. For example, defining:
+  //
+  // templates:
+  //   hello:
+  //    metadata
+  //      labels:
+  //        hello: world
+  //
+  // Then starting a pod with the `inject.istio.io/templates: hello` annotation, will result in the pod
+  // being injected with the hello=world labels.
+  // This is intended for advanced configuration only; most users should use the built in template
+  TypeMapStringInterface templates = 23;
 }
 
 // Configuration for each of the supported tracers.
@@ -1066,8 +1081,6 @@ message Values {
   TelemetryConfig telemetry = 23;
 
   SidecarInjectorConfig sidecarInjectorWebhook = 13;
-
-  google.protobuf.BoolValue clusterResources = 17;
 
   CNIConfig istio_cni = 19;
 
