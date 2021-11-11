@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"strings"
@@ -35,18 +34,20 @@ import (
 )
 
 var (
-	count       int
-	timeout     time.Duration
-	qps         int
-	uds         string
-	headers     []string
-	msg         string
-	method      string
-	http2       bool
-	alpn        []string
-	serverFirst bool
-	clientCert  string
-	clientKey   string
+	count           int
+	timeout         time.Duration
+	qps             int
+	uds             string
+	headers         []string
+	msg             string
+	method          string
+	http2           bool
+	alpn            []string
+	serverName      string
+	serverFirst     bool
+	followRedirects bool
+	clientCert      string
+	clientKey       string
 
 	caFile string
 
@@ -75,7 +76,6 @@ where the network configuration doesn't support gRPC to the source pod.'
 			f, err := forwarder.New(forwarder.Config{
 				Request: request,
 				UDS:     uds,
-				TLSCert: caFile,
 			})
 			if err != nil {
 				log.Fatalf("Failed to create forwarder: %v", err)
@@ -125,9 +125,12 @@ func init() {
 		"send http requests as HTTP with prior knowledge")
 	rootCmd.PersistentFlags().BoolVar(&serverFirst, "server-first", false,
 		"Treat as a server first protocol; do not send request until magic string is received")
+	rootCmd.PersistentFlags().BoolVarP(&followRedirects, "follow-redirects", "L", false,
+		"If enabled, will follow 3xx redirects with the Location header")
 	rootCmd.PersistentFlags().StringVar(&clientCert, "client-cert", "", "client certificate file to use for request")
 	rootCmd.PersistentFlags().StringVar(&clientKey, "client-key", "", "client certificate key file to use for request")
 	rootCmd.PersistentFlags().StringSliceVarP(&alpn, "alpn", "", nil, "alpn to set")
+	rootCmd.PersistentFlags().StringVarP(&serverName, "server-name", "", serverName, "server name to set")
 
 	loggingOptions.AttachCobraFlags(rootCmd)
 
@@ -148,14 +151,16 @@ func defaultScheme(u string) string {
 
 func getRequest(url string) (*proto.ForwardEchoRequest, error) {
 	request := &proto.ForwardEchoRequest{
-		Url:           defaultScheme(url),
-		TimeoutMicros: common.DurationToMicros(timeout),
-		Count:         int32(count),
-		Qps:           int32(qps),
-		Message:       msg,
-		Http2:         http2,
-		ServerFirst:   serverFirst,
-		Method:        method,
+		Url:             defaultScheme(url),
+		TimeoutMicros:   common.DurationToMicros(timeout),
+		Count:           int32(count),
+		Qps:             int32(qps),
+		Message:         msg,
+		Http2:           http2,
+		ServerFirst:     serverFirst,
+		FollowRedirects: followRedirects,
+		Method:          method,
+		ServerName:      serverName,
 	}
 
 	if alpn != nil {
@@ -177,16 +182,11 @@ func getRequest(url string) (*proto.ForwardEchoRequest, error) {
 	}
 
 	if clientCert != "" && clientKey != "" {
-		certData, err := ioutil.ReadFile(clientCert)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate: %v", err)
-		}
-		request.Cert = string(certData)
-		keyData, err := ioutil.ReadFile(clientKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate key: %v", err)
-		}
-		request.Key = string(keyData)
+		request.CertFile = clientCert
+		request.KeyFile = clientKey
+	}
+	if caFile != "" {
+		request.CaCert = caFile
 	}
 	return request, nil
 }

@@ -15,7 +15,6 @@
 package xds
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -134,7 +133,15 @@ func isExpectedGRPCError(err error) bool {
 }
 
 func (s *DiscoveryServer) receive(con *Connection, reqChannel chan *discovery.DiscoveryRequest, errP *error) {
-	defer close(reqChannel) // indicates close of the remote side.
+	defer func() {
+		close(reqChannel)
+		// Close the initialized channel, if its not already closed, to prevent blocking the stream
+		select {
+		case <-con.initialized:
+		default:
+			close(con.initialized)
+		}
+	}()
 	firstReq := true
 	for {
 		req, err := con.stream.Recv()
@@ -152,7 +159,7 @@ func (s *DiscoveryServer) receive(con *Connection, reqChannel chan *discovery.Di
 		if firstReq {
 			firstReq = false
 			if req.Node == nil || req.Node.Id == "" {
-				*errP = errors.New("missing node ID")
+				*errP = status.New(codes.InvalidArgument, "missing node ID").Err()
 				return
 			}
 			// TODO: We should validate that the namespace in the cert matches the claimed namespace in metadata.
@@ -220,6 +227,10 @@ func (s *DiscoveryServer) processRequest(req *discovery.DiscoveryRequest, con *C
 
 // StreamAggregatedResources implements the ADS interface.
 func (s *DiscoveryServer) StreamAggregatedResources(stream discovery.AggregatedDiscoveryService_StreamAggregatedResourcesServer) error {
+	return s.Stream(stream)
+}
+
+func (s *DiscoveryServer) Stream(stream DiscoveryStream) error {
 	// Check if server is ready to accept clients and process new requests.
 	// Currently ready means caches have been synced and hence can build
 	// clusters correctly. Without this check, InitContext() call below would
@@ -229,7 +240,7 @@ func (s *DiscoveryServer) StreamAggregatedResources(stream discovery.AggregatedD
 	// ip tables update latencies.
 	// See https://github.com/istio/istio/issues/25495.
 	if !s.IsServerReady() {
-		return errors.New("server is not ready to serve discovery information")
+		return status.Error(codes.Unavailable, "server is not ready to serve discovery information")
 	}
 
 	ctx := stream.Context()
@@ -240,7 +251,7 @@ func (s *DiscoveryServer) StreamAggregatedResources(stream discovery.AggregatedD
 
 	ids, err := s.authenticate(ctx)
 	if err != nil {
-		return err
+		return status.Error(codes.Unauthenticated, err.Error())
 	}
 	if ids != nil {
 		adsLog.Debugf("Authenticated XDS: %v with identity %v", peerAddr, ids)
@@ -253,7 +264,7 @@ func (s *DiscoveryServer) StreamAggregatedResources(stream discovery.AggregatedD
 		// Error accessing the data - log and close, maybe a different pilot replica
 		// has more luck
 		adsLog.Warnf("Error reading config %v", err)
-		return err
+		return status.Error(codes.Unavailable, "error reading config")
 	}
 	con := newConnection(peerAddr, stream)
 	con.Identities = ids
@@ -467,7 +478,7 @@ func (s *DiscoveryServer) initConnection(node *core.Node, con *Connection) error
 		id, err := checkConnectionIdentity(con)
 		if err != nil {
 			adsLog.Warnf("Unauthorized XDS: %v with identity %v: %v", con.PeerAddr, con.Identities, err)
-			return fmt.Errorf("authorization failed: %v", err)
+			return status.Newf(codes.PermissionDenied, "authorization failed: %v", err).Err()
 		}
 		con.proxy.VerifiedIdentity = id
 	}
@@ -610,7 +621,7 @@ func (s *DiscoveryServer) preProcessRequest(proxy *model.Proxy, req *discovery.D
 				event.Healthy = false
 				event.Message = req.ErrorDetail.Message
 			}
-			s.WorkloadEntryController.UpdateWorkloadEntryHealth(proxy, event)
+			s.WorkloadEntryController.QueueWorkloadEntryHealth(proxy, event)
 		}
 		return false
 	}
@@ -639,11 +650,11 @@ func (s *DiscoveryServer) pushConnection(con *Connection, pushEv *Event) error {
 		s.updateProxy(con.proxy, pushRequest.Push)
 	}
 
-	if !ProxyNeedsPush(con.proxy, pushEv) {
+	if !s.ProxyNeedsPush(con.proxy, pushRequest) {
 		adsLog.Debugf("Skipping push to %v, no updates required", con.ConID)
 		if pushRequest.Full {
 			// Only report for full versions, incremental pushes do not have a new version
-			reportAllEvents(s.StatusReporter, con.ConID, pushRequest.Push.Version, nil)
+			reportAllEvents(s.StatusReporter, con.ConID, pushRequest.Push.LedgerVersion, nil)
 		}
 		return nil
 	}
@@ -688,7 +699,7 @@ func (s *DiscoveryServer) pushConnection(con *Connection, pushEv *Event) error {
 	}
 	if pushRequest.Full {
 		// Report all events for unwatched resources. Watched resources will be reported in pushXds or on ack.
-		reportAllEvents(s.StatusReporter, con.ConID, pushRequest.Push.Version, con.proxy.WatchedResources)
+		reportAllEvents(s.StatusReporter, con.ConID, pushRequest.Push.LedgerVersion, con.proxy.WatchedResources)
 	}
 
 	proxiesConvergeDelay.Record(time.Since(pushRequest.Start).Seconds())
@@ -698,6 +709,7 @@ func (s *DiscoveryServer) pushConnection(con *Connection, pushEv *Event) error {
 // PushOrder defines the order that updates will be pushed in. Any types not listed here will be pushed in random
 // order after the types listed here
 var PushOrder = []string{v3.ClusterType, v3.EndpointType, v3.ListenerType, v3.RouteType, v3.SecretType}
+
 var KnownPushOrder = map[string]struct{}{
 	v3.ClusterType:  {},
 	v3.EndpointType: {},
@@ -794,12 +806,12 @@ func (s *DiscoveryServer) AdsPushAll(version string, req *model.PushRequest) {
 		s.Cache.Clear(req.ConfigsUpdated)
 	}
 	if !req.Full {
-		adsLog.Infof("XDS: Incremental Pushing:%s ConnectedEndpoints:%d",
-			version, s.adsClientCount())
+		adsLog.Infof("XDS: Incremental Pushing:%s ConnectedEndpoints:%d Version:%s",
+			version, s.adsClientCount(), req.Push.PushVersion)
 	} else {
 		totalService := len(req.Push.Services(nil))
-		adsLog.Infof("XDS: Pushing:%s Services:%d ConnectedEndpoints:%d",
-			version, totalService, s.adsClientCount())
+		adsLog.Infof("XDS: Pushing:%s Services:%d ConnectedEndpoints:%d  Version:%s",
+			version, totalService, s.adsClientCount(), req.Push.PushVersion)
 		monServices.Record(float64(totalService))
 
 		// Make sure the ConfigsUpdated map exists

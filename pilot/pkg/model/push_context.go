@@ -40,6 +40,7 @@ import (
 
 var (
 	defaultClusterLocalNamespaces = []string{"kube-system"}
+	defaultClusterLocalServices   = []string{"kubernetes.default.svc"}
 )
 
 // Metrics is an interface for capturing metrics on a per-node basis.
@@ -120,12 +121,15 @@ type destinationRuleIndex struct {
 	//  exportedByNamespace contains all dest rules pertaining to a service exported by a namespace.
 	exportedByNamespace map[string]*processedDestRules
 	rootNamespaceLocal  *processedDestRules
+	// mesh/namespace dest rules to be inherited
+	inheritedByNamespace map[string]*config.Config
 }
 
 func newDestinationRuleIndex() destinationRuleIndex {
 	return destinationRuleIndex{
-		namespaceLocal:      map[string]*processedDestRules{},
-		exportedByNamespace: map[string]*processedDestRules{},
+		namespaceLocal:       map[string]*processedDestRules{},
+		exportedByNamespace:  map[string]*processedDestRules{},
+		inheritedByNamespace: map[string]*config.Config{},
 	}
 }
 
@@ -182,18 +186,18 @@ type PushContext struct {
 	// envoy filters for each namespace including global config namespace
 	envoyFiltersByNamespace map[string][]*EnvoyFilterWrapper
 
-	// The following data is either a global index or used in the inbound path.
-	// Namespace specific views do not apply here.
+	// AuthnPolicies contains Authn policies by namespace.
+	AuthnPolicies *AuthenticationPolicies `json:"-"`
 
 	// AuthzPolicies stores the existing authorization policies in the cluster. Could be nil if there
 	// are no authorization policies in the cluster.
 	AuthzPolicies *AuthorizationPolicies `json:"-"`
 
+	// The following data is either a global index or used in the inbound path.
+	// Namespace specific views do not apply here.
+
 	// Mesh configuration for the mesh.
 	Mesh *meshconfig.MeshConfig `json:"-"`
-
-	// Networks configuration.
-	MeshNetworks *meshconfig.MeshNetworks `json:"-"`
 
 	// Discovery interface for listing services and instances.
 	ServiceDiscovery `json:"-"`
@@ -201,13 +205,15 @@ type PushContext struct {
 	// Config interface for listing routing rules
 	IstioConfigStore `json:"-"`
 
-	// AuthnBetaPolicies contains (beta) Authn policies by namespace.
-	AuthnBetaPolicies *AuthenticationPolicies `json:"-"`
+	// PushVersion describes the push version this push context was computed for
+	PushVersion string
 
-	Version string
+	// LedgerVersion is the version of the configuration ledger
+	LedgerVersion string
 
 	// cache gateways addresses for each network
 	// this is mainly used for kubernetes multi-cluster scenario
+	networksMu      sync.RWMutex
 	networkGateways map[string][]*Gateway
 
 	initDone        atomic.Bool
@@ -329,6 +335,8 @@ const (
 	SecretTrigger TriggerReason = "secret"
 	// Describes a push triggered due to node event
 	NodeTrigger TriggerReason = "node"
+	// Describes a push triggered for Networks change
+	NetworksTrigger TriggerReason = "networks"
 )
 
 // Merge two update requests together
@@ -825,6 +833,18 @@ func (ps *PushContext) DestinationRule(proxy *Proxy, service *Service) *config.C
 		return out
 	}
 
+	// 5. service DestinationRules were merged in SetDestinationRules, return mesh/namespace rules if present
+	if features.EnableDestinationRuleInheritance {
+		// return namespace rule if present
+		if out := ps.destinationRuleIndex.inheritedByNamespace[proxy.ConfigNamespace]; out != nil {
+			return out
+		}
+		// return mesh rule
+		if out := ps.destinationRuleIndex.inheritedByNamespace[ps.Mesh.RootNamespace]; out != nil {
+			return out
+		}
+	}
+
 	return nil
 }
 
@@ -837,6 +857,18 @@ func (ps *PushContext) getExportedDestinationRuleFromNamespace(owningNamespace s
 			// Check if the dest rule for this host is actually exported to the proxy's (client) namespace
 			exportToMap := ps.destinationRuleIndex.exportedByNamespace[owningNamespace].exportTo[specificHostname]
 			if len(exportToMap) == 0 || exportToMap[visibility.Public] || exportToMap[visibility.Instance(clientNamespace)] {
+				if features.EnableDestinationRuleInheritance {
+					var parent *config.Config
+					// client inherits global DR from its own namespace, not from the exported DR's owning namespace
+					// grab the client namespace DR or mesh if none exists
+					if parent = ps.destinationRuleIndex.inheritedByNamespace[clientNamespace]; parent == nil {
+						parent = ps.destinationRuleIndex.inheritedByNamespace[ps.Mesh.RootNamespace]
+					}
+					if child := ps.destinationRuleIndex.exportedByNamespace[owningNamespace].destRule[specificHostname]; child != nil {
+						return ps.inheritDestinationRule(parent, child)
+					}
+					return nil
+				}
 				return ps.destinationRuleIndex.exportedByNamespace[owningNamespace].destRule[specificHostname]
 			}
 		}
@@ -889,10 +921,9 @@ func (ps *PushContext) InitContext(env *Environment, oldPushContext *PushContext
 	}
 
 	ps.Mesh = env.Mesh()
-	ps.MeshNetworks = env.Networks()
-	ps.ServiceDiscovery = env
-	ps.IstioConfigStore = env
-	ps.Version = env.Version()
+	ps.ServiceDiscovery = env.ServiceDiscovery
+	ps.IstioConfigStore = env.IstioConfigStore
+	ps.LedgerVersion = env.Version()
 
 	// Must be initialized first
 	// as initServiceRegistry/VirtualServices/Destrules
@@ -911,7 +942,7 @@ func (ps *PushContext) InitContext(env *Environment, oldPushContext *PushContext
 	}
 
 	// TODO: only do this when meshnetworks or gateway service changed
-	ps.initMeshNetworks()
+	ps.initMeshNetworks(env.Networks())
 
 	ps.initClusterLocalHosts(env)
 
@@ -1021,7 +1052,7 @@ func (ps *PushContext) updateContext(
 			return err
 		}
 	} else {
-		ps.AuthnBetaPolicies = oldPushContext.AuthnBetaPolicies
+		ps.AuthnPolicies = oldPushContext.AuthnPolicies
 	}
 
 	if authzChanged {
@@ -1157,12 +1188,9 @@ func (ps *PushContext) initServiceAccounts(env *Environment, services []*Service
 // Caches list of authentication policies
 func (ps *PushContext) initAuthnPolicies(env *Environment) error {
 	// Init beta policy.
-	var initBetaPolicyErro error
-	if ps.AuthnBetaPolicies, initBetaPolicyErro = initAuthenticationPolicies(env); initBetaPolicyErro != nil {
-		return initBetaPolicyErro
-	}
-
-	return nil
+	var err error
+	ps.AuthnPolicies, err = initAuthenticationPolicies(env)
+	return err
 }
 
 // Caches list of virtual services
@@ -1192,12 +1220,12 @@ func (ps *PushContext) initVirtualServices(env *Environment) error {
 	// the RDS code. See separateVSHostsAndServices in route/route.go
 	sortConfigByCreationTime(vservices)
 
-	vservices, ps.virtualServiceIndex.delegates = mergeVirtualServicesIfNeeded(vservices, ps.exportToDefaults.virtualService)
-
 	// convert all shortnames in virtual services into FQDNs
 	for _, r := range vservices {
 		resolveVirtualServiceShortnames(r.Spec.(*networking.VirtualService), r.Meta)
 	}
+
+	vservices, ps.virtualServiceIndex.delegates = mergeVirtualServicesIfNeeded(vservices, ps.exportToDefaults.virtualService)
 
 	for _, virtualService := range vservices {
 		ns := virtualService.Namespace
@@ -1426,14 +1454,27 @@ func (ps *PushContext) SetDestinationRules(configs []config.Config) {
 	namespaceLocalDestRules := make(map[string]*processedDestRules)
 	exportedDestRulesByNamespace := make(map[string]*processedDestRules)
 	rootNamespaceLocalDestRules := newProcessedDestRules()
+	inheritedConfigs := make(map[string]*config.Config)
 
 	for i := range configs {
 		rule := configs[i].Spec.(*networking.DestinationRule)
+
+		if features.EnableDestinationRuleInheritance && rule.Host == "" {
+			if t, ok := inheritedConfigs[configs[i].Namespace]; ok {
+				log.Warnf(
+					"Namespace/mesh-level DestinationRule is already defined for %q at time %v. Ignore %q which was created at time %v",
+					configs[i].Namespace, t.CreationTimestamp, configs[i].Name, configs[i].CreationTimestamp)
+				continue
+			}
+			inheritedConfigs[configs[i].Namespace] = &configs[i]
+		}
+
 		rule.Host = string(ResolveShortnameToFQDN(rule.Host, configs[i].Meta))
 		exportToMap := make(map[visibility.Instance]bool)
 		for _, e := range rule.ExportTo {
 			exportToMap[visibility.Instance(e)] = true
 		}
+
 		// add only if the dest rule is exported with . or * or explicit exportTo containing this namespace
 		// The global exportTo doesn't matter here (its either . or * - both of which are applicable here)
 		if len(exportToMap) == 0 || exportToMap[visibility.Public] || exportToMap[visibility.Private] ||
@@ -1471,6 +1512,22 @@ func (ps *PushContext) SetDestinationRules(configs []config.Config) {
 		}
 	}
 
+	// precompute DestinationRules with inherited fields
+	if features.EnableDestinationRuleInheritance {
+		globalRule := inheritedConfigs[ps.Mesh.RootNamespace]
+		for ns := range namespaceLocalDestRules {
+			nsRule := inheritedConfigs[ns]
+			inheritedRule := ps.inheritDestinationRule(globalRule, nsRule)
+			for hostname, cfg := range namespaceLocalDestRules[ns].destRule {
+				namespaceLocalDestRules[ns].destRule[hostname] = ps.inheritDestinationRule(inheritedRule, cfg)
+			}
+			// update namespace rule after it has been merged with mesh rule
+			inheritedConfigs[ns] = inheritedRule
+		}
+		// can't precalculate exportedDestRulesByNamespace since we don't know all the client namespaces in advance
+		// inheritance is performed in getExportedDestinationRuleFromNamespace
+	}
+
 	// presort it so that we don't sort it for each DestinationRule call.
 	// sort.Sort for Hostnames will automatically sort from the most specific to least specific
 	for ns := range namespaceLocalDestRules {
@@ -1483,6 +1540,7 @@ func (ps *PushContext) SetDestinationRules(configs []config.Config) {
 	ps.destinationRuleIndex.namespaceLocal = namespaceLocalDestRules
 	ps.destinationRuleIndex.exportedByNamespace = exportedDestRulesByNamespace
 	ps.destinationRuleIndex.rootNamespaceLocal = rootNamespaceLocalDestRules
+	ps.destinationRuleIndex.inheritedByNamespace = inheritedConfigs
 }
 
 func (ps *PushContext) initAuthorizationPolicies(env *Environment) error {
@@ -1636,12 +1694,14 @@ func (ps *PushContext) mergeGateways(proxy *Proxy) *MergedGateway {
 }
 
 // pre computes gateways for each network
-func (ps *PushContext) initMeshNetworks() {
+func (ps *PushContext) initMeshNetworks(meshNetworks *meshconfig.MeshNetworks) {
+	ps.networksMu.Lock()
+	defer ps.networksMu.Unlock()
 	ps.networkGateways = map[string][]*Gateway{}
 
 	// First, use addresses directly specified in meshNetworks
-	if ps.MeshNetworks != nil {
-		for network, networkConf := range ps.MeshNetworks.Networks {
+	if meshNetworks != nil {
+		for network, networkConf := range meshNetworks.Networks {
 			gws := networkConf.Gateways
 			for _, gw := range gws {
 				if gwIP := net.ParseIP(gw.GetAddress()); gwIP != nil {
@@ -1658,7 +1718,6 @@ func (ps *PushContext) initMeshNetworks() {
 		// - the computed map from meshNetworks (triggered by reloadNetworkLookup, the ported logic from getGatewayAddresses)
 		ps.networkGateways[network] = append(ps.networkGateways[network], gateways...)
 	}
-
 }
 
 func (ps *PushContext) initClusterLocalHosts(e *Environment) {
@@ -1667,6 +1726,9 @@ func (ps *PushContext) initClusterLocalHosts(e *Environment) {
 	defaultClusterLocalHosts := make([]host.Name, 0)
 	for _, n := range defaultClusterLocalNamespaces {
 		defaultClusterLocalHosts = append(defaultClusterLocalHosts, host.Name("*."+n+".svc."+domainSuffix))
+	}
+	for _, s := range defaultClusterLocalServices {
+		defaultClusterLocalHosts = append(defaultClusterLocalHosts, host.Name(s+"."+domainSuffix))
 	}
 
 	if discoveryHost, _, err := e.GetDiscoveryAddress(); err != nil {
@@ -1689,9 +1751,13 @@ func (ps *PushContext) initClusterLocalHosts(e *Environment) {
 			// Remove defaults if specified to be non-cluster-local.
 			for _, h := range serviceSettings.Hosts {
 				for i, defaultClusterLocalHost := range defaultClusterLocalHosts {
-					if len(defaultClusterLocalHost) > 0 && strings.HasSuffix(h, string(defaultClusterLocalHost[1:])) {
-						// This default was explicitly overridden, so remove it.
-						defaultClusterLocalHosts[i] = ""
+					if len(defaultClusterLocalHost) > 0 {
+						if h == string(defaultClusterLocalHost) ||
+							(defaultClusterLocalHost.IsWildCarded() &&
+								strings.HasSuffix(h, string(defaultClusterLocalHost[1:]))) {
+							// This default was explicitly overridden, so remove it.
+							defaultClusterLocalHosts[i] = ""
+						}
 					}
 				}
 			}
@@ -1710,10 +1776,14 @@ func (ps *PushContext) initClusterLocalHosts(e *Environment) {
 }
 
 func (ps *PushContext) NetworkGateways() map[string][]*Gateway {
+	ps.networksMu.RLock()
+	defer ps.networksMu.RUnlock()
 	return ps.networkGateways
 }
 
 func (ps *PushContext) NetworkGatewaysByNetwork(network string) []*Gateway {
+	ps.networksMu.RLock()
+	defer ps.networksMu.RUnlock()
 	if ps.networkGateways != nil {
 		return ps.networkGateways[network]
 	}
@@ -1749,7 +1819,7 @@ func (ps *PushContext) BestEffortInferServiceMTLSMode(service *Service, port *Po
 
 	// 2. check mTLS settings from beta policy (i.e PeerAuthentication) at namespace / mesh level.
 	// If the mode is not unknown, use it.
-	if serviceMTLSMode := ps.AuthnBetaPolicies.GetNamespaceMutualTLSMode(service.Attributes.Namespace); serviceMTLSMode != MTLSUnknown {
+	if serviceMTLSMode := ps.AuthnPolicies.GetNamespaceMutualTLSMode(service.Attributes.Namespace); serviceMTLSMode != MTLSUnknown {
 		return serviceMTLSMode
 	}
 

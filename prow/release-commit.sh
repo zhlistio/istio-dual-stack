@@ -32,7 +32,7 @@ DOCKER_HUB=${DOCKER_HUB:-gcr.io/istio-testing}
 GCS_BUCKET=${GCS_BUCKET:-istio-build/dev}
 
 # Use a pinned version in case breaking changes are needed
-BUILDER_SHA=51a0a3ba10b19d903aae1f48052d896c7695c492
+BUILDER_SHA=6c052e01ca09619a8e7bb9580c334a5923097229
 
 # Reference to the next minor version of Istio
 # This will create a version like 1.4-alpha.sha
@@ -100,6 +100,6 @@ release-builder validate --release "${WORK_DIR}/out"
 
 if [[ -z "${DRY_RUN:-}" ]]; then
   release-builder publish --release "${WORK_DIR}/out" \
-    --gcsbucket "${GCS_BUCKET}" --gcsaliases "${NEXT_VERSION}-dev,latest" \
-    --dockerhub "${DOCKER_HUB}" --dockertags "${VERSION},${NEXT_VERSION}-dev,latest"
+    --gcsbucket "${GCS_BUCKET}" --gcsaliases "${NEXT_VERSION}-dev" \
+    --dockerhub "${DOCKER_HUB}" --dockertags "${VERSION},${NEXT_VERSION}-dev"
 fi
