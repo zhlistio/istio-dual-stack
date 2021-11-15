@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/miekg/dns"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -95,6 +96,7 @@ func constructConfig() *config.Config {
 		ProbeTimeout:            viper.GetDuration(constants.ProbeTimeout),
 		SkipRuleApply:           viper.GetBool(constants.SkipRuleApply),
 		RunValidation:           viper.GetBool(constants.RunValidation),
+		RedirectDNS:             viper.GetBool(constants.RedirectDNS),
 	}
 
 	// TODO: Make this more configurable, maybe with an allowlist of users to be captured for output instead of a denylist.
@@ -121,6 +123,15 @@ func constructConfig() *config.Config {
 	}
 	cfg.EnableInboundIPv6 = podIP.To4() == nil
 
+	// Lookup DNS nameservers. We only do this if DNS is enabled in case of some obscure theoretical
+	// case where reading /etc/resolv.conf could fail.
+	if cfg.RedirectDNS {
+		dnsConfig, err := dns.ClientConfigFromFile("/etc/resolv.conf")
+		if err != nil {
+			panic(fmt.Sprintf("failed to load /etc/resolv.conf: %v", err))
+		}
+		cfg.DNSServersV4, cfg.DNSServersV6 = splitV4V6(dnsConfig.Servers)
+	}
 	return cfg
 }
 
@@ -299,6 +310,12 @@ func init() {
 		handleError(err)
 	}
 	viper.SetDefault(constants.RunValidation, false)
+
+	rootCmd.Flags().Bool(constants.RedirectDNS, dnsCaptureByAgent, "Enable capture of dns traffic by istio-agent")
+	if err := viper.BindPFlag(constants.RedirectDNS, rootCmd.Flags().Lookup(constants.RedirectDNS)); err != nil {
+		handleError(err)
+	}
+	viper.SetDefault(constants.RedirectDNS, dnsCaptureByAgent)
 }
 
 func GetCommand() *cobra.Command {

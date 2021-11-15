@@ -38,10 +38,15 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "15014"
     spec:
+      imagePullSecrets:
+      - name: myregistrykey
       containers:
       - name: app
         image: testing.hub/app:latest
         imagePullPolicy: Always
+        securityContext:
+          runAsUser: 1338
+          runAsGroup: 1338
         args:
           - --metrics=15014
           - --cluster
@@ -111,10 +116,15 @@ spec:
         prometheus.io/port: "15014"
         sidecar.istio.io/inject: "false"
     spec:
+      imagePullSecrets:
+      - name: myregistrykey
       containers:
       - name: app
         image: testing.hub/app:latest
         imagePullPolicy: Always
+        securityContext:
+          runAsUser: 1338
+          runAsGroup: 1338
         args:
           - --metrics=15014
           - --cluster

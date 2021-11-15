@@ -85,7 +85,7 @@ func TestAuthorization_mTLS(t *testing.T) {
 			ctx.Config().ApplyYAMLOrFail(t, apps.Namespace1.Name(), policies...)
 			defer ctx.Config().DeleteYAMLOrFail(t, apps.Namespace1.Name(), policies...)
 			for _, cluster := range ctx.Clusters() {
-				ctx.NewSubTest(fmt.Sprintf("From %s", cluster.Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("From %s", cluster.StableName())).Run(func(ctx framework.TestContext) {
 					a := apps.A.Match(echo.InCluster(cluster).And(echo.Namespace(apps.Namespace1.Name())))
 					c := apps.C.Match(echo.InCluster(cluster).And(echo.Namespace(apps.Namespace2.Name())))
 					newTestCase := func(from echo.Instance, path string, expectAllowed bool) rbacUtil.TestCase {
@@ -137,7 +137,7 @@ func TestAuthorization_JWT(t *testing.T) {
 			ctx.Config().ApplyYAMLOrFail(t, ns.Name(), policies...)
 			defer ctx.Config().DeleteYAMLOrFail(t, ns.Name(), policies...)
 			for _, srcCluster := range ctx.Clusters() {
-				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.StableName())).Run(func(ctx framework.TestContext) {
 					a := apps.A.Match(echo.InCluster(srcCluster).And(echo.Namespace(ns.Name())))
 					callCount := 1
 					b := apps.B.Match(echo.Namespace(ns.Name()))
@@ -253,7 +253,7 @@ func TestAuthorization_WorkloadSelector(t *testing.T) {
 			policyNSRoot := applyPolicy("testdata/authz/v1beta1-workload-ns-root.yaml.tmpl", rootns)
 			defer ctx.Config().DeleteYAMLOrFail(t, rootns.Name(), policyNSRoot...)
 			for _, srcCluster := range ctx.Clusters() {
-				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.StableName())).Run(func(ctx framework.TestContext) {
 					a := apps.A.Match(echo.InCluster(srcCluster).And(echo.Namespace(apps.Namespace1.Name())))
 					bInNS1 := apps.B.Match(echo.Namespace(apps.Namespace1.Name()))
 					cInNS1 := apps.C.Match(echo.Namespace(apps.Namespace1.Name()))
@@ -316,8 +316,8 @@ func TestAuthorization_Deny(t *testing.T) {
 	framework.NewTest(t).
 		Features("security.authorization.deny-action").
 		Run(func(ctx framework.TestContext) {
-
-			//TODO: Convert into multicluster support. Currently 503 is received cross-network
+			// TODO: Convert into multicluster support. Currently reachability does
+			// not cover all clusters.
 			if ctx.Clusters().IsMulticluster() {
 				ctx.Skip()
 			}
@@ -336,10 +336,10 @@ func TestAuthorization_Deny(t *testing.T) {
 
 			rootns := newRootNS(ctx)
 			policy := applyPolicy("testdata/authz/v1beta1-deny.yaml.tmpl", ns)
-			util.WaitForConfigWithSleep(ctx, policy[0], ns)
+			util.WaitForConfig(ctx, policy[0], ns)
 			defer ctx.Config().DeleteYAMLOrFail(t, ns.Name(), policy...)
 			policyNSRoot := applyPolicy("testdata/authz/v1beta1-deny-ns-root.yaml.tmpl", rootns)
-			util.WaitForConfigWithSleep(ctx, policyNSRoot[0], rootns)
+			util.WaitForConfig(ctx, policyNSRoot[0], rootns)
 			defer ctx.Config().DeleteYAMLOrFail(t, rootns.Name(), policyNSRoot...)
 
 			callCount := 1
@@ -348,7 +348,7 @@ func TestAuthorization_Deny(t *testing.T) {
 				callCount = util.CallsPerCluster * len(ctx.Clusters())
 			}
 			for _, srcCluster := range ctx.Clusters() {
-				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.StableName())).Run(func(ctx framework.TestContext) {
 					a := apps.A.Match(echo.InCluster(srcCluster).And(echo.Namespace(apps.Namespace1.Name())))
 					b := apps.B.Match(echo.Namespace(apps.Namespace1.Name()))
 					c := apps.C.Match(echo.Namespace(apps.Namespace1.Name()))
@@ -427,9 +427,9 @@ func TestAuthorization_NegativeMatch(t *testing.T) {
 				callCount = util.CallsPerCluster * len(ctx.Clusters())
 			}
 			for _, srcCluster := range ctx.Clusters() {
-				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.StableName())).Run(func(ctx framework.TestContext) {
 					srcA := apps.A.Match(echo.InCluster(srcCluster).And(echo.Namespace(apps.Namespace1.Name())))
-					srcX := apps.X.Match(echo.InCluster(srcCluster).And(echo.Namespace(apps.Namespace2.Name())))
+					srcBInNS2 := apps.B.Match(echo.InCluster(srcCluster).And(echo.Namespace(apps.Namespace2.Name())))
 					destB := apps.B.Match(echo.Namespace(apps.Namespace1.Name()))
 					destC := apps.C.Match(echo.Namespace(apps.Namespace1.Name()))
 					destD := apps.D.Match(echo.Namespace(apps.Namespace1.Name()))
@@ -450,12 +450,12 @@ func TestAuthorization_NegativeMatch(t *testing.T) {
 						}
 					}
 
-					// a, b, c and d are in the same namespace and x is in a different namespace.
-					// a connects to b, c and d with mTLS.
-					// x connects to b and c with mTLS, to d with plain-text.
+					// a, b, c and d are in the same namespace and another b(bInNs2) is in a different namespace.
+					// a connects to b, c and d in ns1 with mTLS.
+					// bInNs2 connects to b and c with mTLS, to d with plain-text.
 					cases := []rbacUtil.TestCase{
 						// Test the policy with overlapped `paths` and `not_paths` on b.
-						// a and x should have the same results:
+						// a and bInNs2 should have the same results:
 						// - path with prefix `/prefix` should be denied explicitly.
 						// - path `/prefix/allowlist` should be excluded from the deny.
 						// - path `/allow` should be allowed implicitly.
@@ -463,22 +463,22 @@ func TestAuthorization_NegativeMatch(t *testing.T) {
 						newTestCase(srcA[0], destB, "/prefix/other", false),
 						newTestCase(srcA[0], destB, "/prefix/allowlist", true),
 						newTestCase(srcA[0], destB, "/allow", true),
-						newTestCase(srcX[0], destB, "/prefix", false),
-						newTestCase(srcX[0], destB, "/prefix/other", false),
-						newTestCase(srcX[0], destB, "/prefix/allowlist", true),
-						newTestCase(srcX[0], destB, "/allow", true),
+						newTestCase(srcBInNS2[0], destB, "/prefix", false),
+						newTestCase(srcBInNS2[0], destB, "/prefix/other", false),
+						newTestCase(srcBInNS2[0], destB, "/prefix/allowlist", true),
+						newTestCase(srcBInNS2[0], destB, "/allow", true),
 
 						// Test the policy that denies other namespace on c.
 						// a should be allowed because it's from the same namespace.
-						// x should be denied because it's from a different namespace.
+						// bInNs2 should be denied because it's from a different namespace.
 						newTestCase(srcA[0], destC, "/", true),
-						newTestCase(srcX[0], destC, "/", false),
+						newTestCase(srcBInNS2[0], destC, "/", false),
 
 						// Test the policy that denies plain-text traffic on d.
 						// a should be allowed because it's using mTLS.
-						// x should be denied because it's using plain-text.
+						// bInNs2 should be denied because it's using plain-text.
 						newTestCase(srcA[0], destD, "/", true),
-						newTestCase(srcX[0], destD, "/", false),
+						newTestCase(srcBInNS2[0], destD, "/", false),
 					}
 
 					rbacUtil.RunRBACTest(ctx, cases)
@@ -493,10 +493,6 @@ func TestAuthorization_IngressGateway(t *testing.T) {
 	framework.NewTest(t).
 		Features("security.authorization.ingress-gateway").
 		Run(func(ctx framework.TestContext) {
-			// TODO: finish convert all authorization tests into multicluster supported
-			if ctx.Clusters().IsMulticluster() {
-				ctx.Skip()
-			}
 			ns := namespace.NewOrFail(t, ctx, namespace.Config{
 				Prefix: "v1beta1-ingress-gateway",
 				Inject: true,
@@ -516,7 +512,7 @@ func TestAuthorization_IngressGateway(t *testing.T) {
 
 			var b echo.Instance
 			echoboot.NewBuilder(ctx).
-				With(&b, util.EchoConfig("b", ns, false, nil, nil)).
+				With(&b, util.EchoConfig("b", ns, false, nil)).
 				BuildOrFail(t)
 
 			ingr := ist.IngressFor(ctx.Clusters().Default())
@@ -637,10 +633,6 @@ func TestAuthorization_EgressGateway(t *testing.T) {
 	framework.NewTest(t).
 		Features("security.authorization.egress-gateway").
 		Run(func(ctx framework.TestContext) {
-			//TODO: Convert into multicluster support. Currently 503 is received
-			if ctx.Clusters().IsMulticluster() {
-				ctx.Skip()
-			}
 			ns := namespace.NewOrFail(t, ctx, namespace.Config{
 				Prefix: "v1beta1-egress-gateway",
 				Inject: true,
@@ -648,7 +640,7 @@ func TestAuthorization_EgressGateway(t *testing.T) {
 
 			var a, b, c echo.Instance
 			echoboot.NewBuilder(ctx).
-				With(&a, util.EchoConfig("a", ns, false, nil, nil)).
+				With(&a, util.EchoConfig("a", ns, false, nil)).
 				With(&b, echo.Config{
 					Service:   "b",
 					Namespace: ns,
@@ -661,7 +653,7 @@ func TestAuthorization_EgressGateway(t *testing.T) {
 						},
 					},
 				}).
-				With(&c, util.EchoConfig("c", ns, false, nil, nil)).
+				With(&c, util.EchoConfig("c", ns, false, nil)).
 				BuildOrFail(t)
 
 			args := map[string]string{
@@ -815,10 +807,6 @@ func TestAuthorization_TCP(t *testing.T) {
 	framework.NewTest(t).
 		Features("security.authorization.tcp").
 		Run(func(ctx framework.TestContext) {
-			// TODO: finish convert all authorization tests into multicluster supported
-			if ctx.Clusters().IsMulticluster() {
-				ctx.Skip()
-			}
 			ns := namespace.NewOrFail(t, ctx, namespace.Config{
 				Prefix: "v1beta1-tcp-1",
 				Inject: true,
@@ -858,7 +846,7 @@ func TestAuthorization_TCP(t *testing.T) {
 				},
 			}
 			echoboot.NewBuilder(ctx).
-				With(&x, util.EchoConfig("x", ns2, false, nil, nil)).
+				With(&x, util.EchoConfig("x", ns2, false, nil)).
 				With(&a, echo.Config{
 					Subsets:        []echo.SubsetConfig{{}},
 					Namespace:      ns,
@@ -980,7 +968,7 @@ func TestAuthorization_Conditions(t *testing.T) {
 			IPC = IPC[:lengthC-1]
 			portC := 8090
 			for i := 0; i < len(ctx.Clusters()); i++ {
-				ctx.NewSubTest(fmt.Sprintf("IpA IpB IpC in %s", ctx.Clusters()[i].Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("IpA IpB IpC in %s", ctx.Clusters()[i].StableName())).Run(func(ctx framework.TestContext) {
 					podAWithIPA := apps.A.Match(echo.InCluster(ctx.Clusters()[i])).Match(echo.Namespace(nsA.Name()))[0]
 					podBWithIPB := apps.B.Match(echo.InCluster(ctx.Clusters()[i])).Match(echo.Namespace(nsB.Name()))[0]
 
@@ -999,7 +987,7 @@ func TestAuthorization_Conditions(t *testing.T) {
 					defer ctx.Config().DeleteYAMLOrFail(t, "", policies...)
 
 					for _, srcCluster := range ctx.Clusters() {
-						ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.Name())).Run(func(ctx framework.TestContext) {
+						ctx.NewSubTest(fmt.Sprintf("From %s", srcCluster.StableName())).Run(func(ctx framework.TestContext) {
 							a := apps.A.Match(echo.InCluster(srcCluster).And(echo.Namespace(nsA.Name())))
 							b := apps.B.Match(echo.InCluster(srcCluster).And(echo.Namespace(nsB.Name())))
 							callCount := 1
@@ -1092,20 +1080,16 @@ func TestAuthorization_GRPC(t *testing.T) {
 	framework.NewTest(t).
 		Features("security.authorization.grpc-protocol").
 		Run(func(ctx framework.TestContext) {
-			// TODO: finish convert all authorization tests into multicluster supported
-			if ctx.Clusters().IsMulticluster() {
-				ctx.Skip()
-			}
 			ns := namespace.NewOrFail(t, ctx, namespace.Config{
 				Prefix: "v1beta1-grpc",
 				Inject: true,
 			})
 			var a, b, c, d echo.Instance
 			echoboot.NewBuilder(ctx).
-				With(&a, util.EchoConfig("a", ns, false, nil, nil)).
-				With(&b, util.EchoConfig("b", ns, false, nil, nil)).
-				With(&c, util.EchoConfig("c", ns, false, nil, nil)).
-				With(&d, util.EchoConfig("d", ns, false, nil, nil)).
+				With(&a, util.EchoConfig("a", ns, false, nil)).
+				With(&b, util.EchoConfig("b", ns, false, nil)).
+				With(&c, util.EchoConfig("c", ns, false, nil)).
+				With(&d, util.EchoConfig("d", ns, false, nil)).
 				BuildOrFail(t)
 
 			cases := []rbacUtil.TestCase{
@@ -1170,7 +1154,7 @@ func TestAuthorization_Path(t *testing.T) {
 			ctx.Config().ApplyYAMLOrFail(t, ns.Name(), policies...)
 			defer ctx.Config().DeleteYAMLOrFail(t, ns.Name(), policies...)
 			for _, srcCluster := range ctx.Clusters() {
-				ctx.NewSubTest(fmt.Sprintf("In %s", srcCluster.Name())).Run(func(ctx framework.TestContext) {
+				ctx.NewSubTest(fmt.Sprintf("In %s", srcCluster.StableName())).Run(func(ctx framework.TestContext) {
 					b := apps.B.GetOrFail(ctx, echo.InCluster(srcCluster).And(echo.Namespace(ns.Name())))
 					a := apps.A.Match(echo.Namespace(ns.Name()))
 					callCount := 1
@@ -1229,10 +1213,10 @@ func TestAuthorization_Audit(t *testing.T) {
 
 			var a, b, c, d echo.Instance
 			echoboot.NewBuilder(ctx).
-				With(&a, util.EchoConfig("a", ns, false, nil, nil)).
-				With(&b, util.EchoConfig("b", ns, false, nil, nil)).
-				With(&c, util.EchoConfig("c", ns, false, nil, nil)).
-				With(&d, util.EchoConfig("d", ns, false, nil, nil)).
+				With(&a, util.EchoConfig("a", ns, false, nil)).
+				With(&b, util.EchoConfig("b", ns, false, nil)).
+				With(&c, util.EchoConfig("c", ns, false, nil)).
+				With(&d, util.EchoConfig("d", ns, false, nil)).
 				BuildOrFail(t)
 
 			newTestCase := func(target echo.Instance, path string, expectAllowed bool) rbacUtil.TestCase {
@@ -1325,7 +1309,7 @@ func TestAuthorization_Custom(t *testing.T) {
 
 			var a, b, c, d, e, f, x echo.Instance
 			echoConfig := func(name string, includeExtAuthz bool) echo.Config {
-				cfg := util.EchoConfig(name, ns, false, nil, nil)
+				cfg := util.EchoConfig(name, ns, false, nil)
 				cfg.IncludeExtAuthz = includeExtAuthz
 				cfg.Ports = ports
 				return cfg
