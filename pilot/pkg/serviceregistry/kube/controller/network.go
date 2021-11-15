@@ -298,11 +298,14 @@ func (c *Controller) updateClusterExternalAddressesForNodePortServices(nodeSelec
 	} else {
 		svc.Mutex.Lock()
 		var nodeAddresses []string
-		for _, n := range c.nodeInfoMap {
+		for nodeName, n := range c.nodeInfoMap {
 			if nodeSelector.SubsetOf(n.labels) {
-				continue
+				if svc.Attributes.ExternalTrafficPolicy == model.ExternalTrafficPolicyLocal &&
+					!c.containsWorkloadForLocalTrafficService(svc, nodeName) {
+					continue
+				}
+				nodeAddresses = append(nodeAddresses, n.address)
 			}
-			nodeAddresses = append(nodeAddresses, n.address)
 		}
 		svc.Mutex.Unlock()
 		svc.Attributes.ClusterExternalAddresses = map[string][]string{c.clusterID: nodeAddresses}
