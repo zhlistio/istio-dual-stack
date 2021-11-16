@@ -43,6 +43,8 @@ features:
     mirroring:
     ingress:
       loadbalancing:
+      custom:
+      topology:
     ratelimit:
       envoy:
     original-source-ip:
@@ -115,6 +117,8 @@ features:
       plugin-cert:
   # features which allow extending or deep integrations with istio and other products
   extensibility:
+    wasm:
+      remote-load:
   # features releated to the lifecycle of istio installations
   installation:
     istioctl:
@@ -128,7 +132,10 @@ features:
       centralremotekubeconfig:
     helm:
       default:
+        install:
+        upgrade:
       firstpartyjwt:
+        install:
     upgrade:
   # describes internal build and testing infrastrcuture
   infrastructure:

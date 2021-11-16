@@ -75,9 +75,7 @@ rules:
   - daemonsets
   - deployments
   - deployments/finalizers
-  - ingresses
   - replicasets
-  - statefulsets
   verbs:
   - '*'
 - apiGroups:
@@ -109,6 +107,14 @@ rules:
   - rolebindings
   verbs:
   - '*'
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - create
+  - update
 - apiGroups:
   - ""
   resources:

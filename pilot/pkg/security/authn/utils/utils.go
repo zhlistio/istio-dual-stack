@@ -52,7 +52,6 @@ func BuildInboundFilterChain(mTLSMode model.MutualTLSMode, sdsUdsPath string, no
 		return []networking.FilterChain{{}}
 	}
 
-	meta := node.Metadata
 	var alpnIstioMatch *listener.FilterChainMatch
 	var ctx *tls.DownstreamTlsContext
 	if listenerProtocol == networking.ListenerProtocolTCP || listenerProtocol == networking.ListenerProtocolAuto {
@@ -87,18 +86,17 @@ func BuildInboundFilterChain(mTLSMode model.MutualTLSMode, sdsUdsPath string, no
 			},
 			RequireClientCertificate: protovalue.BoolTrue,
 		}
-
-		if features.EnableTLSv2OnInboundPath {
-			// Set Minimum TLS version to match the default client version and allowed strong cipher suites for sidecars.
-			ctx.CommonTlsContext.TlsParams = &tls.TlsParameters{
-				TlsMinimumProtocolVersion: tls.TlsParameters_TLSv1_2,
-				CipherSuites:              SupportedCiphers,
-			}
-		}
-
 	}
 
-	authn_model.ApplyToCommonTLSContext(ctx.CommonTlsContext, meta, sdsUdsPath, []string{} /*subjectAltNames*/, trustDomainAliases)
+	if features.EnableTLSv2OnInboundPath {
+		// Set Minimum TLS version to match the default client version and allowed strong cipher suites for sidecars.
+		ctx.CommonTlsContext.TlsParams = &tls.TlsParameters{
+			TlsMinimumProtocolVersion: tls.TlsParameters_TLSv1_2,
+			CipherSuites:              SupportedCiphers,
+		}
+	}
+
+	authn_model.ApplyToCommonTLSContext(ctx.CommonTlsContext, node, sdsUdsPath, []string{} /*subjectAltNames*/, trustDomainAliases)
 
 	if mTLSMode == model.MTLSStrict {
 		log.Debug("Allow only istio mutual TLS traffic")

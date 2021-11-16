@@ -15,7 +15,6 @@
 package security
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -35,6 +34,12 @@ const (
 
 	// DefaultRootCertFilePath is the well-known path for an existing root certificate file
 	DefaultRootCertFilePath = "./etc/certs/root-cert.pem"
+
+	// LocalSDS is the location of the in-process SDS server - must be in a writeable dir.
+	DefaultLocalSDSPath = "./etc/istio/proxy/SDS"
+
+	// SystemRootCerts is special case input for root cert configuration to use system root certificates.
+	SystemRootCerts = "SYSTEM"
 
 	// Credential fetcher type
 	GCE  = "GoogleComputeEngine"
@@ -76,13 +81,6 @@ type Options struct {
 	// https://github.com/spiffe/spiffe/blob/master/standards/SPIFFE-ID.md#21-trust-domain
 	TrustDomain string
 
-	// Recycle job running interval (to clean up staled sds client connections).
-	RecycleInterval time.Duration
-
-	// UseLocalJWT is set when the sds server should use its own local JWT, and not expect one
-	// from the UDS caller. Used when it runs in the same container with Envoy.
-	UseLocalJWT bool
-
 	// Whether to generate PKCS#8 private keys.
 	Pkcs8Keys bool
 
@@ -92,8 +90,8 @@ type Options struct {
 	// OutputKeyCertToDir is the directory for output the key and certificate
 	OutputKeyCertToDir string
 
-	// ProvCert is the directory for client to provide the key and certificate to server
-	// when do mtls
+	// ProvCert is the directory for client to provide the key and certificate to CA server when authenticating
+	// with mTLS. This is not used for workload mTLS communication, and is
 	ProvCert string
 
 	// ClusterID is the cluster where the agent resides.
@@ -124,24 +122,15 @@ type Options struct {
 	// secret TTL.
 	SecretTTL time.Duration
 
-	// secret should be rotated if:
-	// time.Now.After(<secret ExpireTime> - <secret TTL> * SecretRotationGracePeriodRatio)
+	// The ratio of cert lifetime to refresh a cert. For example, at 0.10 and 1 hour TTL,
+	// we would refresh 6 minutes before expiration.
 	SecretRotationGracePeriodRatio float64
-
-	// Key rotation job running interval.
-	RotationInterval time.Duration
-
-	// Cached secret will be removed from cache if (time.now - secretItem.CreatedTime >= evictionDuration), this prevents cache growing indefinitely.
-	EvictionDuration time.Duration
 
 	// authentication provider specific plugins, will exchange the token
 	// For example exchange long lived refresh with access tokens.
 	// Used by the secret fetcher when signing CSRs.
-	TokenExchangers []TokenExchanger
-
-	// CSR requires a token. This is a property of the CA.
-	// The default value is false because Istiod does not require a token in CSR.
-	UseTokenForCSR bool
+	// Optional; if not present the token will be used directly
+	TokenExchanger TokenExchanger
 
 	// credential fetcher.
 	CredFetcher CredFetcher
@@ -154,6 +143,54 @@ type Options struct {
 
 	// Name of the Service Account
 	ServiceAccount string
+
+	// XDS auth provider
+	XdsAuthProvider string
+
+	// Token manager for the token exchange of XDS
+	TokenManager TokenManager
+}
+
+// TokenManager contains methods for generating token.
+type TokenManager interface {
+	// GenerateToken takes STS request parameters and generates token. Returns
+	// StsResponseParameters in JSON.
+	GenerateToken(parameters StsRequestParameters) ([]byte, error)
+	// DumpTokenStatus dumps status of all generated tokens and returns status in JSON.
+	DumpTokenStatus() ([]byte, error)
+	// GetMetadata returns the metadata headers related to the token
+	GetMetadata(forCA bool, xdsAuthProvider, token string) (map[string]string, error)
+}
+
+// StsRequestParameters stores all STS request attributes defined in
+// https://tools.ietf.org/html/draft-ietf-oauth-token-exchange-16#section-2.1
+type StsRequestParameters struct {
+	// REQUIRED. The value "urn:ietf:params:oauth:grant-type:token- exchange"
+	// indicates that a token exchange is being performed.
+	GrantType string
+	// OPTIONAL. Indicates the location of the target service or resource where
+	// the client intends to use the requested security token.
+	Resource string
+	// OPTIONAL. The logical name of the target service where the client intends
+	// to use the requested security token.
+	Audience string
+	// OPTIONAL. A list of space-delimited, case-sensitive strings, that allow
+	// the client to specify the desired Scope of the requested security token in the
+	// context of the service or Resource where the token will be used.
+	Scope string
+	// OPTIONAL. An identifier, for the type of the requested security token.
+	RequestedTokenType string
+	// REQUIRED. A security token that represents the identity of the party on
+	// behalf of whom the request is being made.
+	SubjectToken string
+	// REQUIRED. An identifier, that indicates the type of the security token in
+	// the "subject_token" parameter.
+	SubjectTokenType string
+	// OPTIONAL. A security token that represents the identity of the acting party.
+	ActorToken string
+	// An identifier, that indicates the type of the security token in the
+	// "actor_token" parameter.
+	ActorTokenType string
 }
 
 // Client interface defines the clients need to implement to talk to CA for CSR.
@@ -161,28 +198,25 @@ type Options struct {
 // interface to get back a signed certificate. There is no guarantee that the SAN
 // in the request will be returned - server may replace it.
 type Client interface {
-	CSRSign(ctx context.Context, csrPEM []byte, token string, certValidTTLInSec int64) ([]string, error)
+	CSRSign(csrPEM []byte, certValidTTLInSec int64) ([]string, error)
+	Close()
 }
 
 // SecretManager defines secrets management interface which is used by SDS.
 type SecretManager interface {
-	// GenerateSecret generates new secret and cache the secret.
-	// Current implementation constructs the SAN based on the token's 'sub'
-	// claim, expected to be in the K8S format. No other JWTs are currently supported
-	// due to client logic. If JWT is missing/invalid, the resourceName is used.
-	GenerateSecret(ctx context.Context, connectionID, resourceName, token string) (*SecretItem, error)
-
-	// SecretExist checks if secret already existed.
-	// This API is used for sds server to check if coming request is ack request.
-	SecretExist(connectionID, resourceName, token, version string) bool
-
-	// DeleteSecret deletes a secret by its key from cache.
-	DeleteSecret(connectionID, resourceName string)
+	// GenerateSecret generates new secret for the given resource.
+	//
+	// The current implementation also watched the generated secret and trigger a callback when it is
+	// near expiry. It will constructs the SAN based on the token's 'sub' claim, expected to be in
+	// the K8S format. No other JWTs are currently supported due to client logic. If JWT is
+	// missing/invalid, the resourceName is used.
+	GenerateSecret(resourceName string) (*SecretItem, error)
 }
 
 // TokenExchanger provides common interfaces so that authentication providers could choose to implement their specific logic.
 type TokenExchanger interface {
-	ExchangeToken(trustDomain, serviceAccountToken string) (string, error)
+	// ExchangeToken provides a common interface to exchange an existing token for a new one.
+	ExchangeToken(serviceAccountToken string) (string, error)
 }
 
 // SecretItem is the cached item in in-memory secret store.
@@ -195,14 +229,6 @@ type SecretItem struct {
 	// ResourceName passed from envoy SDS discovery request.
 	// "ROOTCA" for root cert request, "default" for key/cert request.
 	ResourceName string
-
-	// Credential token passed from envoy, caClient uses this token to send
-	// CSR to CA to sign certificate.
-	Token string
-
-	// Version is used(together with token and ResourceName) to identify discovery request from
-	// envoy which is used only for confirm purpose.
-	Version string
 
 	CreatedTime time.Time
 
@@ -218,4 +244,7 @@ type CredFetcher interface {
 
 	// The name of the IdentityProvider that can authenticate the workload credential.
 	GetIdentityProvider() string
+
+	// Stop releases resources and cleans up.
+	Stop()
 }

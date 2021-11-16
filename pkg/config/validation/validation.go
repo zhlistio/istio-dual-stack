@@ -78,6 +78,8 @@ var (
 		"retriable-4xx":          true,
 		"refused-stream":         true,
 		"retriable-status-codes": true,
+		"retriable-headers":      true,
+		"envoy-ratelimited":      true,
 
 		// 'x-envoy-retry-grpc-on' supported policies:
 		// https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/router_filter#x-envoy-retry-grpc-on
@@ -326,23 +328,24 @@ func ValidateUnixAddress(addr string) error {
 
 // ValidateGateway checks gateway specifications
 var ValidateGateway = registerValidateFunc("ValidateGateway",
-	func(cfg config.Config) (warnings Warning, errs error) {
+	func(cfg config.Config) (Warning, error) {
 		name := cfg.Name
+		v := Validation{}
 		// Gateway name must conform to the DNS label format (no dots)
 		if !labels.IsDNS1123Label(name) {
-			errs = appendErrors(errs, fmt.Errorf("invalid gateway name: %q", name))
+			v = appendValidation(v, fmt.Errorf("invalid gateway name: %q", name))
 		}
 		value, ok := cfg.Spec.(*networking.Gateway)
 		if !ok {
-			errs = appendErrors(errs, fmt.Errorf("cannot cast to gateway: %#v", cfg.Spec))
-			return
+			v = appendValidation(v, fmt.Errorf("cannot cast to gateway: %#v", cfg.Spec))
+			return v.Unwrap()
 		}
 
 		if len(value.Servers) == 0 {
-			errs = appendErrors(errs, fmt.Errorf("gateway must have at least one server"))
+			v = appendValidation(v, fmt.Errorf("gateway must have at least one server"))
 		} else {
 			for _, server := range value.Servers {
-				errs = appendErrors(errs, validateServer(server))
+				v = appendValidation(v, validateServer(server))
 			}
 		}
 
@@ -351,18 +354,21 @@ var ValidateGateway = registerValidateFunc("ValidateGateway",
 
 		for _, s := range value.Servers {
 			if s == nil {
-				errs = appendErrors(errs, fmt.Errorf("server may not be nil"))
+				v = appendValidation(v, fmt.Errorf("server may not be nil"))
 				continue
 			}
 			if s.Port != nil {
 				if portNames[s.Port.Name] {
-					errs = appendErrors(errs, fmt.Errorf("port names in servers must be unique: duplicate name %s", s.Port.Name))
+					v = appendValidation(v, fmt.Errorf("port names in servers must be unique: duplicate name %s", s.Port.Name))
 				}
 				portNames[s.Port.Name] = true
+				if !protocol.Parse(s.Port.Protocol).IsHTTP() && s.GetTls().GetHttpsRedirect() {
+					v = appendValidation(v, WrapWarning(fmt.Errorf("tls.httpsRedirect should only be used with http servers")))
+				}
 			}
 		}
 
-		return nil, errs
+		return v.Unwrap()
 	})
 
 func validateServer(server *networking.Server) (errs error) {
@@ -476,9 +482,28 @@ var ValidateDestinationRule = registerValidateFunc("ValidateDestinationRule",
 		}
 
 		v := Validation{}
-		v = appendValidation(v,
-			ValidateWildcardDomain(rule.Host),
-			validateTrafficPolicy(rule.TrafficPolicy))
+		if features.EnableDestinationRuleInheritance {
+			if rule.Host == "" {
+				if len(rule.Subsets) != 0 {
+					v = appendValidation(v,
+						fmt.Errorf("mesh/namespace destination rule cannot have subsets"))
+				}
+				if len(rule.ExportTo) != 0 {
+					v = appendValidation(v,
+						fmt.Errorf("mesh/namespace destination rule cannot have exportTo configured"))
+				}
+				if rule.TrafficPolicy != nil && len(rule.TrafficPolicy.PortLevelSettings) != 0 {
+					v = appendValidation(v,
+						fmt.Errorf("mesh/namespace destination rule cannot have portLevelSettings configured"))
+				}
+			} else {
+				v = appendValidation(v, ValidateWildcardDomain(rule.Host))
+			}
+		} else {
+			v = appendValidation(v, ValidateWildcardDomain(rule.Host))
+		}
+
+		v = appendValidation(v, validateTrafficPolicy(rule.TrafficPolicy))
 
 		for _, subset := range rule.Subsets {
 			if subset == nil {
@@ -812,8 +837,8 @@ var ValidateSidecar = registerValidateFunc("ValidateSidecar",
 			return nil, err
 		}
 
-		if len(rule.Egress) == 0 {
-			return nil, fmt.Errorf("sidecar: missing egress")
+		if len(rule.Egress) == 0 && len(rule.Ingress) == 0 && rule.OutboundTrafficPolicy == nil {
+			return nil, fmt.Errorf("sidecar: empty configuration provided")
 		}
 
 		portMap := make(map[uint32]struct{})
@@ -1361,7 +1386,7 @@ func ValidateMeshConfig(mesh *meshconfig.MeshConfig) (errs error) {
 	}
 
 	if err := validateExtensionProvider(mesh); err != nil {
-		errs = multierror.Append(errs, err)
+		scope.Warnf("found invalid extension provider (can be ignored if the given extension provider is not used): %v", err)
 	}
 
 	return
@@ -2304,7 +2329,7 @@ func validateReadinessProbe(probe *networking.ReadinessProbe) (errs error) {
 		}
 		errs = appendErrors(errs, ValidatePort(int(h.Port)))
 		if h.Scheme != "" && h.Scheme != string(apimirror.URISchemeHTTPS) && h.Scheme != string(apimirror.URISchemeHTTP) {
-			errs = appendErrors(errs, fmt.Errorf(`httpGet.schema must be one of "http", "https"`))
+			errs = appendErrors(errs, fmt.Errorf(`httpGet.scheme must be one of "http", "https"`))
 		}
 		for _, header := range h.HttpHeaders {
 			if header == nil {

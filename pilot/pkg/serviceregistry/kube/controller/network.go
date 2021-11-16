@@ -131,30 +131,38 @@ func (c *Controller) NetworkGateways() map[string][]*model.Gateway {
 
 // extractGatewaysFromService checks if the service is a cross-network gateway
 // and if it is, updates the controller's gateways.
-func (c *Controller) extractGatewaysFromService(svc *model.Service) {
+func (c *Controller) extractGatewaysFromService(svc *model.Service) bool {
 	c.Lock()
 	defer c.Unlock()
-	c.extractGatewaysInner(svc)
+	return c.extractGatewaysInner(svc)
 }
 
 // reloadNetworkGateways performs extractGatewaysFromService for all services registered with the controller.
 func (c *Controller) reloadNetworkGateways() {
 	c.Lock()
 	defer c.Unlock()
+	gwsChanged := false
 	for _, svc := range c.servicesMap {
-		c.extractGatewaysInner(svc)
+		if c.extractGatewaysInner(svc) {
+			gwsChanged = true
+		}
+	}
+	if gwsChanged {
+		c.xdsUpdater.ConfigUpdate(&model.PushRequest{Full: true, Reason: []model.TriggerReason{model.NetworksTrigger}})
 	}
 }
 
-// extractGatewaysInner performs the logic for extractGatewaysFromService without locking the controller
-func (c *Controller) extractGatewaysInner(svc *model.Service) {
+// extractGatewaysInner performs the logic for extractGatewaysFromService without locking the controller.
+// Returns true if any gateways changed.
+func (c *Controller) extractGatewaysInner(svc *model.Service) bool {
 	svc.Mutex.RLock()
 	defer svc.Mutex.RUnlock()
 
 	gwPort, network := c.getGatewayDetails(svc)
 	if gwPort == 0 || network == "" {
+		// TODO detect if this previously had the gateway label so we can cleanup the old value
 		// not a gateway
-		return
+		return false
 	}
 
 	if c.networkGateways[svc.Hostname] == nil {
@@ -181,7 +189,23 @@ func (c *Controller) extractGatewaysInner(svc *model.Service) {
 			gws = append(gws, &model.Gateway{Addr: ip, Port: gwPort})
 		}
 	}
+
+	gwsChanged := len(c.networkGateways[svc.Hostname][network]) != len(gws)
+	if !gwsChanged {
+		// number of gateways are the same, check that their contents are the same
+		found := map[model.Gateway]bool{}
+		for _, gw := range gws {
+			found[*gw] = true
+		}
+		for _, gw := range c.networkGateways[svc.Hostname][network] {
+			if _, ok := found[*gw]; !ok {
+				gwsChanged = true
+				break
+			}
+		}
+	}
 	c.networkGateways[svc.Hostname][network] = gws
+	return gwsChanged
 }
 
 // getGatewayDetails finds the port and network to use for cross-network traffic on the given service.
@@ -258,8 +282,6 @@ func getWorkloadNodeLocations(endpoints []*model.IstioEndpoint) map[string]struc
 }
 
 func (c *Controller) updateClusterExternalAddressesForNodePortServices(nodeSelector labels.Instance, svc *model.Service) {
-	svc.Mutex.Lock()
-	defer svc.Mutex.Unlock()
 	if nodeSelector == nil {
 		var extAddresses []string
 		for nodeName, n := range c.nodeInfoMap {
@@ -274,17 +296,18 @@ func (c *Controller) updateClusterExternalAddressesForNodePortServices(nodeSelec
 		}
 		svc.Attributes.ClusterExternalAddresses = map[string][]string{c.clusterID: extAddresses}
 	} else {
+		svc.Mutex.Lock()
 		var nodeAddresses []string
-		for nodeName, n := range c.nodeInfoMap {
+		for _, n := range c.nodeInfoMap {
 			if nodeSelector.SubsetOf(n.labels) {
-				if svc.Attributes.ExternalTrafficPolicy == model.ExternalTrafficPolicyLocal &&
-					!c.containsWorkloadForLocalTrafficService(svc, nodeName) {
-					continue
-				}
-				nodeAddresses = append(nodeAddresses, n.address)
+				continue
 			}
+			nodeAddresses = append(nodeAddresses, n.address)
 		}
+		svc.Mutex.Unlock()
 		svc.Attributes.ClusterExternalAddresses = map[string][]string{c.clusterID: nodeAddresses}
+		// update gateways that use the service
+		c.extractGatewaysFromService(svc)
 	}
 }
 

@@ -16,7 +16,6 @@ package framework
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -31,7 +30,9 @@ import (
 
 	"gopkg.in/yaml.v2"
 
+	"istio.io/istio/pkg/test/framework/components/cluster"
 	"istio.io/istio/pkg/test/framework/components/environment/kube"
+	"istio.io/istio/pkg/test/framework/config"
 	ferrors "istio.io/istio/pkg/test/framework/errors"
 	"istio.io/istio/pkg/test/framework/label"
 	"istio.io/istio/pkg/test/framework/resource"
@@ -224,14 +225,16 @@ func (s *suiteImpl) RequireSingleCluster() Suite {
 
 func (s *suiteImpl) RequireEnvironmentVersion(version string) Suite {
 	fn := func(ctx resource.Context) error {
-		ver, err := ctx.Clusters()[0].GetKubernetesVersion()
-		if err != nil {
-			return fmt.Errorf("failed to get Kubernetes version: %v", err)
-		}
-		serverVersion := fmt.Sprintf("%s.%s", ver.Major, ver.Minor)
-		if serverVersion < version {
-			s.Skip(fmt.Sprintf("Required Kubernetes version (%v) is greater than current: %v",
-				version, serverVersion))
+		for _, c := range ctx.Clusters().Kube() {
+			ver, err := c.GetKubernetesVersion()
+			if err != nil {
+				return fmt.Errorf("failed to get Kubernetes version: %v", err)
+			}
+			serverVersion := fmt.Sprintf("%s.%s", ver.Major, ver.Minor)
+			if serverVersion < version {
+				s.Skip(fmt.Sprintf("Required Kubernetes version (%v) is greater than current: %v",
+					version, serverVersion))
+			}
 		}
 		return nil
 	}
@@ -375,7 +378,7 @@ func isMulticluster(ctx resource.Context) bool {
 	return false
 }
 
-func clusters(ctx resource.Context) []resource.Cluster {
+func clusters(ctx resource.Context) []cluster.Cluster {
 	if ctx.Environment() != nil {
 		return ctx.Environment().Clusters()
 	}
@@ -399,7 +402,7 @@ func (s *suiteImpl) writeOutput() {
 		if err != nil {
 			log.Errorf("failed writing test suite outcome to yaml: %s", err)
 		}
-		err = ioutil.WriteFile(path.Join(artifactsPath, out.Name+".yaml"), outbytes, 0644)
+		err = ioutil.WriteFile(path.Join(artifactsPath, out.Name+".yaml"), outbytes, 0o644)
 		if err != nil {
 			log.Errorf("failed writing test suite outcome to file: %s", err)
 		}
@@ -475,16 +478,13 @@ func newEnvironment(ctx resource.Context) (resource.Environment, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.Minikube {
-		return nil, fmt.Errorf("istio.test.kube.minikube is deprecated; set --istio.test.kube.loadbalancer=false instead")
-	}
 	return kube.New(ctx, s)
 }
 
 func getSettings(testID string) (*resource.Settings, error) {
 	// Parse flags and init logging.
-	if !flag.Parsed() {
-		flag.Parse()
+	if !config.Parsed() {
+		config.Parse()
 	}
 
 	return resource.SettingsFromCommandLine(testID)

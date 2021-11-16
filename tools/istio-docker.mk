@@ -228,7 +228,7 @@ dockerx: DOCKER_RULE?=mkdir -p $(DOCKERX_BUILD_TOP)/$@ && cp -rp $^ $(DOCKERX_BU
 dockerx: RENAME_TEMPLATE?=mkdir -p $(DOCKERX_BUILD_TOP)/$@ && cp $(ECHO_DOCKER)/$(VM_OS_DOCKERFILE_TEMPLATE) $(DOCKERX_BUILD_TOP)/$@/Dockerfile$(suffix $@)
 dockerx: docker | $(ISTIO_DOCKER_TAR)
 dockerx:
-	HUB=$(HUB) \
+	HUBS="$(HUBS)" \
 		TAG=$(TAG) \
 		PROXY_REPO_SHA=$(PROXY_REPO_SHA) \
 		VERSION=$(VERSION) \
@@ -238,7 +238,8 @@ dockerx:
 		DOCKERX_PUSH=$(DOCKERX_PUSH) \
 		DOCKER_ARCHITECTURES=$(DOCKER_ARCHITECTURES) \
 		./tools/buildx-gen.sh $(DOCKERX_BUILD_TOP) $(DOCKER_TARGETS)
-	DOCKER_CLI_EXPERIMENTAL=enabled docker buildx bake $(BUILDX_BAKE_EXTRA_OPTIONS) -f $(DOCKERX_BUILD_TOP)/docker-bake.hcl $(DOCKER_BUILD_VARIANTS) || \
+	@# Retry works around https://github.com/docker/buildx/issues/298
+	DOCKER_CLI_EXPERIMENTAL=enabled bin/retry.sh "read: connection reset by peer" docker buildx bake $(BUILDX_BAKE_EXTRA_OPTIONS) -f $(DOCKERX_BUILD_TOP)/docker-bake.hcl $(DOCKER_BUILD_VARIANTS) || \
 		{ docker logs buildx_buildkit_container-builder0; exit 1; }
 
 # Support individual images like `dockerx.pilot`

@@ -28,6 +28,7 @@ import (
 	networking "istio.io/api/networking/v1alpha3"
 	security_beta "istio.io/api/security/v1beta1"
 	api "istio.io/api/type/v1beta1"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pkg/config"
 	"istio.io/istio/pkg/config/constants"
 )
@@ -413,7 +414,6 @@ func TestValidateMeshConfig(t *testing.T) {
 			"trustDomainAliases[0]",
 			"trustDomainAliases[1]",
 			"trustDomainAliases[2]",
-			"invalid extension provider default: port number 999999",
 		}
 		switch err := err.(type) {
 		case *multierror.Error:
@@ -770,12 +770,13 @@ func TestValidateProxyConfig(t *testing.T) {
 
 func TestValidateGateway(t *testing.T) {
 	tests := []struct {
-		name string
-		in   proto.Message
-		out  string
+		name    string
+		in      proto.Message
+		out     string
+		warning string
 	}{
-		{"empty", &networking.Gateway{}, "server"},
-		{"invalid message", &networking.Server{}, "cannot cast"},
+		{"empty", &networking.Gateway{}, "server", ""},
+		{"invalid message", &networking.Server{}, "cannot cast", ""},
 		{"happy domain",
 			&networking.Gateway{
 				Servers: []*networking.Server{{
@@ -783,7 +784,7 @@ func TestValidateGateway(t *testing.T) {
 					Port:  &networking.Port{Name: "name1", Number: 7, Protocol: "http"},
 				}},
 			},
-			""},
+			"", ""},
 		{"happy multiple servers",
 			&networking.Gateway{
 				Servers: []*networking.Server{
@@ -792,7 +793,7 @@ func TestValidateGateway(t *testing.T) {
 						Port:  &networking.Port{Name: "name1", Number: 7, Protocol: "http"},
 					}},
 			},
-			""},
+			"", ""},
 		{"invalid port",
 			&networking.Gateway{
 				Servers: []*networking.Server{
@@ -801,7 +802,7 @@ func TestValidateGateway(t *testing.T) {
 						Port:  &networking.Port{Name: "name1", Number: 66000, Protocol: "http"},
 					}},
 			},
-			"port"},
+			"port", ""},
 		{"duplicate port names",
 			&networking.Gateway{
 				Servers: []*networking.Server{
@@ -814,7 +815,7 @@ func TestValidateGateway(t *testing.T) {
 						Port:  &networking.Port{Name: "foo", Number: 8080, Protocol: "http"},
 					}},
 			},
-			"port names"},
+			"port names", ""},
 		{"invalid domain",
 			&networking.Gateway{
 				Servers: []*networking.Server{
@@ -823,24 +824,38 @@ func TestValidateGateway(t *testing.T) {
 						Port:  &networking.Port{Number: 7, Protocol: "http"},
 					}},
 			},
-			"domain"},
+			"domain", ""},
+		{"valid httpsRedirect",
+			&networking.Gateway{
+				Servers: []*networking.Server{
+					{
+						Hosts: []string{"bar.com"},
+						Port:  &networking.Port{Name: "http", Number: 80, Protocol: "http"},
+						Tls:   &networking.ServerTLSSettings{HttpsRedirect: true},
+					}},
+			},
+			"", ""},
+		{"invalid https httpsRedirect",
+			&networking.Gateway{
+				Servers: []*networking.Server{
+					{
+						Hosts: []string{"bar.com"},
+						Port:  &networking.Port{Name: "https", Number: 80, Protocol: "https"},
+						Tls:   &networking.ServerTLSSettings{HttpsRedirect: true},
+					}},
+			},
+			"", "tls.httpsRedirect should only be used with http servers"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ValidateGateway(config.Config{
+			warn, err := ValidateGateway(config.Config{
 				Meta: config.Meta{
 					Name:      someName,
 					Namespace: someNamespace,
 				},
 				Spec: tt.in,
 			})
-			if err == nil && tt.out != "" {
-				t.Fatalf("ValidateGateway(%v) = nil, wanted %q", tt.in, tt.out)
-			} else if err != nil && tt.out == "" {
-				t.Fatalf("ValidateGateway(%v) = %v, wanted nil", tt.in, err)
-			} else if err != nil && !strings.Contains(err.Error(), tt.out) {
-				t.Fatalf("ValidateGateway(%v) = %v, wanted %q", tt.in, err, tt.out)
-			}
+			checkValidationMessage(t, warn, err, tt.warning, tt.out)
 		})
 	}
 }
@@ -1754,6 +1769,85 @@ func TestValidateHTTPRedirect(t *testing.T) {
 				t.Fatalf("got valid=%v but wanted valid=%v: %v", err == nil, tc.valid, err)
 			}
 		})
+	}
+}
+
+func TestValidateDestinationWithInheritance(t *testing.T) {
+	features.EnableDestinationRuleInheritance = true
+	defer func() {
+		features.EnableDestinationRuleInheritance = false
+	}()
+	cases := []struct {
+		name  string
+		in    proto.Message
+		valid bool
+	}{
+		{name: "simple destination rule", in: &networking.DestinationRule{
+			Host: "reviews",
+			TrafficPolicy: &networking.TrafficPolicy{
+				Tls: &networking.ClientTLSSettings{
+					Mode: networking.ClientTLSSettings_SIMPLE,
+				},
+			},
+			Subsets: []*networking.Subset{
+				{Name: "v1", Labels: map[string]string{"version": "v1"}},
+				{Name: "v2", Labels: map[string]string{"version": "v2"}},
+			},
+		}, valid: true},
+		{name: "simple global destination rule", in: &networking.DestinationRule{
+			Host: "reviews",
+			TrafficPolicy: &networking.TrafficPolicy{
+				Tls: &networking.ClientTLSSettings{
+					Mode: networking.ClientTLSSettings_SIMPLE,
+				},
+			},
+		}, valid: true},
+		{name: "global rule with subsets", in: &networking.DestinationRule{
+			TrafficPolicy: &networking.TrafficPolicy{
+				Tls: &networking.ClientTLSSettings{
+					Mode: networking.ClientTLSSettings_SIMPLE,
+				},
+			},
+			Subsets: []*networking.Subset{
+				{Name: "v1", Labels: map[string]string{"version": "v1"}},
+				{Name: "v2", Labels: map[string]string{"version": "v2"}},
+			},
+		}, valid: false},
+		{name: "global rule with exportTo", in: &networking.DestinationRule{
+			TrafficPolicy: &networking.TrafficPolicy{
+				Tls: &networking.ClientTLSSettings{
+					Mode: networking.ClientTLSSettings_SIMPLE,
+				},
+			},
+			ExportTo: []string{"ns1", "ns2"},
+		}, valid: false},
+		{name: "global rule with portLevelSettings", in: &networking.DestinationRule{
+			TrafficPolicy: &networking.TrafficPolicy{
+				Tls: &networking.ClientTLSSettings{
+					Mode: networking.ClientTLSSettings_SIMPLE,
+				},
+				PortLevelSettings: []*networking.TrafficPolicy_PortTrafficPolicy{
+					{
+						Port: &networking.PortSelector{Number: 8000},
+						OutlierDetection: &networking.OutlierDetection{
+							MinHealthPercent: 20,
+						},
+					},
+				},
+			},
+		}, valid: false},
+	}
+	for _, c := range cases {
+		if _, got := ValidateDestinationRule(config.Config{
+			Meta: config.Meta{
+				Name:      someName,
+				Namespace: someNamespace,
+			},
+			Spec: c.in,
+		}); (got == nil) != c.valid {
+			t.Errorf("ValidateDestinationRule failed on %v: got valid=%v but wanted valid=%v: %v",
+				c.name, got == nil, c.valid, got)
+		}
 	}
 }
 
@@ -4903,7 +4997,11 @@ func TestValidateSidecar(t *testing.T) {
 					DefaultEndpoint: "127.0.0.1:9999",
 				},
 			},
-		}, false},
+		}, true},
+		{"empty", &networking.Sidecar{}, false},
+		{"just outbound traffic policy", &networking.Sidecar{OutboundTrafficPolicy: &networking.OutboundTrafficPolicy{
+			Mode: networking.OutboundTrafficPolicy_ALLOW_ANY,
+		}}, true},
 		{"empty protocol", &networking.Sidecar{
 			Ingress: []*networking.IstioIngressListener{
 				{

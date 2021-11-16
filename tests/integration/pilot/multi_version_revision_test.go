@@ -16,7 +16,10 @@
 package pilot
 
 import (
+	"archive/tar"
+	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"path/filepath"
 	"strings"
@@ -26,7 +29,6 @@ import (
 	"github.com/hashicorp/go-multierror"
 
 	"istio.io/istio/pkg/config/protocol"
-	"istio.io/istio/pkg/test/env"
 	"istio.io/istio/pkg/test/framework"
 	"istio.io/istio/pkg/test/framework/components/echo"
 	"istio.io/istio/pkg/test/framework/components/echo/echoboot"
@@ -84,14 +86,9 @@ func TestMultiVersionRevision(t *testing.T) {
 			// create an echo instance in each revisioned namespace, all these echo
 			// instances will be injected with proxies from their respective versions
 			builder := echoboot.NewBuilder(ctx)
-			instanceCount := len(revisionedNamespaces) + 1
-			instances := make([]echo.Instance, instanceCount)
 
-			// add an existing pod from apps to the rotation to avoid an extra deployment
-			instances[instanceCount-1] = apps.PodA[0]
-
-			for i, ns := range revisionedNamespaces {
-				builder = builder.With(&instances[i], echo.Config{
+			for _, ns := range revisionedNamespaces {
+				builder = builder.WithConfig(echo.Config{
 					Service:   fmt.Sprintf("revision-%s", ns.revision),
 					Namespace: ns.namespace,
 					Ports: []echo.Port{
@@ -113,7 +110,10 @@ func TestMultiVersionRevision(t *testing.T) {
 					},
 				})
 			}
-			builder.BuildOrFail(ctx)
+			instances := builder.BuildOrFail(ctx)
+			// add an existing pod from apps to the rotation to avoid an extra deployment
+			instances = append(instances, apps.PodA[0])
+
 			testAllEchoCalls(ctx, instances)
 		})
 }
@@ -149,27 +149,45 @@ func testAllEchoCalls(ctx framework.TestContext, echoInstances []echo.Instance) 
 // installRevisionOrFail takes an Istio version and installs a revisioned control plane running that version
 // provided istio version must be present in tests/integration/pilot/testdata/upgrade for the installation to succeed
 func installRevisionOrFail(ctx framework.TestContext, version string, configs map[string]string) {
-	installationTestdataDir := filepath.Join(env.IstioSrc, "tests/integration/pilot/testdata/upgrade")
-	installationConfigPath := filepath.Join(installationTestdataDir, fmt.Sprintf("%s-install.yaml", version))
-	configBytes, err := ioutil.ReadFile(installationConfigPath)
+	config, err := ReadInstallFile(fmt.Sprintf("%s-install.yaml", version))
 	if err != nil {
-		ctx.Fatalf("could not read installation config at path %s: %v", installationConfigPath, err)
+		ctx.Fatalf("could not read installation config: %v", err)
 	}
+	configs[version] = config
+	ctx.Config().ApplyYAMLOrFail(ctx, i.Settings().SystemNamespace, config)
+}
 
-	configs[version] = string(configBytes)
-	ctx.Config().ApplyYAMLOrFail(ctx, i.Settings().SystemNamespace, string(configBytes))
+// ReadInstallFile reads a tar compress installation file from the embedded
+func ReadInstallFile(f string) (string, error) {
+	b, err := ioutil.ReadFile(filepath.Join("testdata/upgrade", f+".tar"))
+	if err != nil {
+		return "", err
+	}
+	tr := tar.NewReader(bytes.NewBuffer(b))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break // End of archive
+		}
+		if err != nil {
+			return "", err
+		}
+		if hdr.Name != f {
+			continue
+		}
+		contents, err := ioutil.ReadAll(tr)
+		if err != nil {
+			return "", err
+		}
+		return string(contents), nil
+	}
+	return "", fmt.Errorf("file not found")
 }
 
 // skipIfK8sVersionUnsupported skips the test if we're running on a k8s version that is not expected to work
 // with any of the revision versions included in the test (i.e. istio 1.7 not supported on k8s 1.15)
 func skipIfK8sVersionUnsupported(ctx framework.TestContext) {
-	ver, err := ctx.Clusters().Default().GetKubernetesVersion()
-	if err != nil {
-		ctx.Fatalf("failed to get Kubernetes version: %v", err)
-	}
-	serverVersion := fmt.Sprintf("%s.%s", ver.Major, ver.Minor)
-	ctx.Name()
-	if serverVersion < "1.16" {
-		ctx.Skipf("k8s version %s not supported for %s (<%s)", serverVersion, ctx.Name(), "1.16")
+	if !ctx.Clusters().Default().MinKubeVersion(1, 16) {
+		ctx.Skipf("k8s version not supported for %s (<%s)", ctx.Name(), "1.16")
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"istio.io/istio/pkg/test"
+	"istio.io/istio/pkg/test/framework/components/cluster"
 	"istio.io/istio/pkg/test/framework/errors"
 	"istio.io/istio/pkg/test/framework/label"
 	"istio.io/istio/pkg/test/framework/resource"
@@ -43,6 +44,7 @@ type TestContext interface {
 	//
 	// If this TestContext was not created by a Test or if that Test is not running, this method will panic.
 	NewSubTest(name string) Test
+	NewSubTestf(format string, a ...interface{}) Test
 
 	// WorkDir allocated for this test.
 	WorkDir() string
@@ -84,8 +86,10 @@ type TestContext interface {
 	Skipped() bool
 }
 
-var _ TestContext = &testContext{}
-var _ test.Failer = &testContext{}
+var (
+	_ TestContext = &testContext{}
+	_ test.Failer = &testContext{}
+)
 
 // testContext for the currently executing test.
 type testContext struct {
@@ -159,6 +163,10 @@ func newTestContext(test *testImpl, goTest *testing.T, s *suiteContext, parentSc
 		goTest.Skipf("Skipping: label mismatch: labels=%v, filter=%v", allLabels, s.settings.Selector)
 	}
 
+	if s.settings.SkipMatcher.MatchTest(goTest.Name()) {
+		goTest.Skipf("Skipping: test %v matched -istio.test.skip regex", goTest.Name())
+	}
+
 	scopes.Framework.Debugf("Creating New test context")
 	workDir := path.Join(s.settings.RunDir(), goTest.Name(), "_test_context")
 	if err := os.MkdirAll(workDir, os.ModePerm); err != nil {
@@ -206,7 +214,10 @@ func (c *testContext) Environment() resource.Environment {
 	return c.suite.environment
 }
 
-func (c *testContext) Clusters() resource.Clusters {
+func (c *testContext) Clusters() cluster.Clusters {
+	if c == nil || c.Environment() == nil {
+		return nil
+	}
 	return c.Environment().Clusters()
 }
 
@@ -242,7 +253,7 @@ func (c *testContext) CreateTmpDirectory(prefix string) (string, error) {
 	return dir, err
 }
 
-func (c *testContext) Config(clusters ...resource.Cluster) resource.ConfigManager {
+func (c *testContext) Config(clusters ...cluster.Cluster) resource.ConfigManager {
 	return newConfigManager(c, clusters)
 }
 
@@ -273,6 +284,10 @@ func (c *testContext) NewSubTest(name string) Test {
 		s:             c.test.s,
 		featureLabels: c.test.featureLabels,
 	}
+}
+
+func (c *testContext) NewSubTestf(format string, a ...interface{}) Test {
+	return c.NewSubTest(fmt.Sprintf(format, a...))
 }
 
 func (c *testContext) WhenDone(fn func() error) {
