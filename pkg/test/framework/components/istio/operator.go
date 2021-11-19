@@ -389,9 +389,12 @@ func deploy(ctx resource.Context, env *kube.Environment, cfg Config) (Instance, 
 		}
 	}
 
-	// Configure gateways for remote clusters.
+	// Configure discovery and gateways for remote clusters.
 	for _, c := range ctx.Clusters().Kube().Remotes() {
 		c := c
+		if err = configureRemoteClusterDiscovery(i, cfg, c); err != nil {
+			return i, err
+		}
 
 		// Install ingress and egress gateways
 		// These need to be installed as a separate step for external control planes because config clusters are installed
@@ -597,7 +600,7 @@ func installControlPlaneCluster(i *operatorComponent, cfg Config, c cluster.Clus
 		}
 	}
 
-	if i.environment.IsMulticluster() || !c.IsConfig() {
+	if i.environment.IsMulticluster() {
 		// patch the ISTIOD_CUSTOM_HOST to allow using the webhook by IP (this is something we only do in tests)
 
 		// fetch after installing eastwest (for external istiod, this will be loadbalancer address of istiod directly)
@@ -609,15 +612,6 @@ func installControlPlaneCluster(i *operatorComponent, cfg Config, c cluster.Clus
 		// TODO generate & install a valid cert in CI
 		if err := patchIstiodCustomHost(istiodAddress, cfg, c); err != nil {
 			return err
-		}
-
-		// configure istioctl to run with an external control plane topology.
-		if !c.IsConfig() {
-			os.Setenv("ISTIOCTL_XDS_ADDRESS", istiodAddress.String())
-			os.Setenv("ISTIOCTL_PREFER_EXPERIMENTAL", "true")
-			if err := cmd.ConfigAndEnvProcessing(); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -657,13 +651,20 @@ func installRemoteCommon(i *operatorComponent, cfg Config, c cluster.Cluster, de
 	}
 
 	// Configure the cluster and network arguments to pass through the injector webhook.
-	remoteIstiodAddress, err := i.RemoteDiscoveryAddressFor(c)
-	if err != nil {
-		return err
+	if i.isExternalControlPlane() {
+		installSettings = append(installSettings,
+			"--set", fmt.Sprintf("values.istiodRemote.injectionPath=/inject/net/%s/cluster/%s", c.NetworkName(), c.Name()))
+	} else {
+		remoteIstiodAddress, err := i.RemoteDiscoveryAddressFor(c)
+		if err != nil {
+			return err
+		}
+		installSettings = append(installSettings,
+			"--set", "values.global.remotePilotAddress="+remoteIstiodAddress.IP.String(),
+			"--set", fmt.Sprintf("values.istiodRemote.injectionURL=https://%s/inject/net/%s/cluster/%s",
+				net.JoinHostPort(remoteIstiodAddress.IP.String(), "15017"), c.NetworkName(), c.Name()),
+			"--set", fmt.Sprintf("values.base.validationURL=https://%s/validate", net.JoinHostPort(remoteIstiodAddress.IP.String(), "15017")))
 	}
-	installSettings = append(installSettings,
-		"--set", fmt.Sprintf("values.istiodRemote.injectionURL=https://%s/inject/net/%s/cluster/%s",
-			net.JoinHostPort(remoteIstiodAddress.IP.String(), "15017"), c.NetworkName(), c.Name()))
 
 	if err := install(i, installSettings, istioCtl, c.Name()); err != nil {
 		return err
@@ -906,6 +907,114 @@ func deployCACerts(workDir string, env *kube.Environment, cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// configureRemoteClusterDiscovery creates a local istiod Service and Endpoints pointing to the external control plane.
+// This is used to configure the remote cluster webhooks in the test environment.
+// In a production deployment, the external istiod would be configured using proper DNS+certs instead.
+func configureRemoteClusterDiscovery(i *operatorComponent, cfg Config, c cluster.Cluster) error {
+	discoveryAddress, err := i.RemoteDiscoveryAddressFor(c)
+	if err != nil {
+		return err
+	}
+
+	// configure istioctl to run with an external control plane topology.
+	if !i.ctx.Clusters().IsMulticluster() {
+		os.Setenv("ISTIOCTL_XDS_ADDRESS", discoveryAddress.String())
+		os.Setenv("ISTIOCTL_PREFER_EXPERIMENTAL", "true")
+		if err := cmd.ConfigAndEnvProcessing(); err != nil {
+			return err
+		}
+	}
+
+	discoveryIP := discoveryAddress.IP.String()
+
+	scopes.Framework.Infof("creating endpoints and service in %s to get discovery from %s", c.Name(), discoveryIP)
+	svc := &kubeApiCore.Service{
+		ObjectMeta: kubeApiMeta.ObjectMeta{
+			Name:      istiodSvcName,
+			Namespace: cfg.SystemNamespace,
+		},
+		Spec: kubeApiCore.ServiceSpec{
+			Ports: []kubeApiCore.ServicePort{
+				{
+					Port:     15012,
+					Name:     "tls-istiod",
+					Protocol: kubeApiCore.ProtocolTCP,
+				},
+				{
+					Name:     "tls-webhook",
+					Protocol: kubeApiCore.ProtocolTCP,
+					Port:     443,
+				},
+				{
+					Name:     "tls",
+					Protocol: kubeApiCore.ProtocolTCP,
+					Port:     15443,
+				},
+			},
+		},
+	}
+	if _, err = c.CoreV1().Services(cfg.SystemNamespace).Create(context.TODO(), svc, kubeApiMeta.CreateOptions{}); err != nil {
+		// Ignore if service already exists. An update requires additional metadata.
+		if !errors.IsAlreadyExists(err) {
+			scopes.Framework.Errorf("failed to create services: %v", err)
+			return err
+		}
+	}
+
+	eps := &kubeApiCore.Endpoints{
+		ObjectMeta: kubeApiMeta.ObjectMeta{
+			Name:      istiodSvcName,
+			Namespace: cfg.SystemNamespace,
+		},
+		Subsets: []kubeApiCore.EndpointSubset{
+			{
+				Addresses: []kubeApiCore.EndpointAddress{
+					{
+						IP: discoveryIP,
+					},
+				},
+				Ports: []kubeApiCore.EndpointPort{
+					{
+						Name:     "tls-istiod",
+						Protocol: kubeApiCore.ProtocolTCP,
+						Port:     15012,
+					},
+					{
+						Name:     "tls-webhook",
+						Protocol: kubeApiCore.ProtocolTCP,
+						Port:     443,
+					},
+				},
+			},
+		},
+	}
+
+	if _, err = c.CoreV1().Endpoints(cfg.SystemNamespace).Create(context.TODO(), eps, kubeApiMeta.CreateOptions{}); err != nil {
+		if errors.IsAlreadyExists(err) {
+			if _, err = c.CoreV1().Endpoints(cfg.SystemNamespace).Update(context.TODO(), eps, kubeApiMeta.UpdateOptions{}); err != nil {
+				scopes.Framework.Errorf("failed to update endpoints: %v", err)
+				return err
+			}
+		} else {
+			scopes.Framework.Errorf("failed to create endpoints: %v", err)
+			return err
+		}
+	}
+
+	err = retry.UntilSuccess(func() error {
+		_, err := c.CoreV1().Services(cfg.SystemNamespace).Get(context.TODO(), istiodSvcName, kubeApiMeta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		_, err = c.CoreV1().Endpoints(cfg.SystemNamespace).Get(context.TODO(), istiodSvcName, kubeApiMeta.GetOptions{})
+		if err != nil {
+			return err
+		}
+		return nil
+	}, componentDeployTimeout, componentDeployDelay)
+	return err
 }
 
 // configureRemoteConfigForControlPlane allows istiod in the given external control plane to read resources
