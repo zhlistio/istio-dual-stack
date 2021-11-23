@@ -664,6 +664,9 @@ func installRemoteCommon(i *operatorComponent, cfg Config, c cluster.Cluster, de
 	installSettings = append(installSettings,
 		"--set", fmt.Sprintf("values.istiodRemote.injectionURL=https://%s/inject/net/%s/cluster/%s",
 			net.JoinHostPort(remoteIstiodAddress.IP.String(), "15017"), c.NetworkName(), c.Name()))
+	if !i.isExternalControlPlane() {
+		installSettings = append(installSettings, "--set", "values.global.remotePilotAddress="+remoteIstiodAddress.IP.String())
+	}
 
 	if err := install(i, installSettings, istioCtl, c.Name()); err != nil {
 		return err
