@@ -41,9 +41,9 @@ spec:
               mountPath: /var/lib/istio/inject
         env:
         - name: INJECTION_WEBHOOK_CONFIG_NAME
-          value: "istio-sidecar-injector-istio-system"
+          value: ""
         - name: VALIDATION_WEBHOOK_CONFIG_NAME
-          value: "istio-istio-system"
+          value: ""
         - name: EXTERNAL_ISTIOD
           value: "true"
         - name: SHARED_MESH_CONFIG

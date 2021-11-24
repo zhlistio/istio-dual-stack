@@ -309,6 +309,9 @@ func deploy(ctx resource.Context, env *kube.Environment, cfg Config) (Instance, 
 		cfg.PrimaryClusterIOPFile = IntegrationTestExternalIstiodPrimaryDefaultsIOP
 		cfg.ConfigClusterIOPFile = IntegrationTestExternalIstiodConfigDefaultsIOP
 		i.settings = cfg
+		//	} else if !cfg.IstiodlessRemotes {
+		//		cfg.RemoteClusterIOPFile = IntegrationTestDefaultsIOP
+		//		i.settings = cfg
 	}
 
 	scopes.Framework.Infof("=== Istio Component Config ===")
@@ -662,11 +665,9 @@ func installRemoteCommon(i *operatorComponent, cfg Config, c cluster.Cluster, de
 		return err
 	}
 	installSettings = append(installSettings,
+		"--set", "values.global.remotePilotAddress="+remoteIstiodAddress.IP.String(),
 		"--set", fmt.Sprintf("values.istiodRemote.injectionURL=https://%s/inject/net/%s/cluster/%s",
 			net.JoinHostPort(remoteIstiodAddress.IP.String(), "15017"), c.NetworkName(), c.Name()))
-	if !i.isExternalControlPlane() {
-		installSettings = append(installSettings, "--set", "values.global.remotePilotAddress="+remoteIstiodAddress.IP.String())
-	}
 
 	if err := install(i, installSettings, istioCtl, c.Name()); err != nil {
 		return err
