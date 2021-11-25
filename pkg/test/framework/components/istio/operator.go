@@ -371,10 +371,10 @@ func deploy(ctx resource.Context, env *kube.Environment, cfg Config) (Instance, 
 	}
 
 	// For multicluster, configure direct access so each control plane can get endpoints from all API servers.
-	// This needs to be done before installing remote clusters to accomodate non-istiodless remote cluster
+	// This needs to be done before installing remote clusters to accommodate non-istiodless remote cluster
 	// that use the default profile, which installs gateways right away and will fail if the control plane
 	// isn't responding.
-	if ctx.Clusters().IsMulticluster() && !(i.isExternalControlPlane() || cfg.IstiodlessRemotes) {
+	if ctx.Clusters().IsMulticluster() {
 		if err := i.configureDirectAPIServerAccess(ctx, cfg); err != nil {
 			return nil, err
 		}
