@@ -13,7 +13,7 @@ spec:
     protocol: TCP
   clusterIP: None
   {{- else }}
-# when istiod isn't enabled, we can use istiod service name
+# when local istiod isn't enabled, we can use istiod service name to reach the remote control plane
 apiVersion: v1
 kind: Service
 metadata:
