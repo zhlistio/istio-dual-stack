@@ -17,6 +17,7 @@ package v1alpha3
 import (
 	"fmt"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 
@@ -27,6 +28,7 @@ import (
 	xdstype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	wrappers "google.golang.org/protobuf/types/known/wrapperspb"
+	coreV1 "k8s.io/api/core/v1"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
 	networking "istio.io/api/networking/v1alpha3"
@@ -201,8 +203,8 @@ func (c cacheStats) merge(other cacheStats) cacheStats {
 	}
 }
 
-func buildClusterKey(service *model.Service, port *model.Port, cb *ClusterBuilder, proxy *model.Proxy, efKeys []string) *clusterCache {
-	clusterName := model.BuildSubsetKey(model.TrafficDirectionOutbound, "", service.Hostname, port.Port)
+func buildClusterKey(service *model.Service, port *model.Port, cb *ClusterBuilder, proxy *model.Proxy, direction model.TrafficDirection, efKeys []string) *clusterCache {
+	clusterName := model.BuildSubsetKey(direction, "", service.Hostname, port.Port)
 	clusterKey := &clusterCache{
 		clusterName:     clusterName,
 		proxyVersion:    cb.proxyVersion,
@@ -234,47 +236,70 @@ func (configgen *ConfigGeneratorImpl) buildOutboundClusters(cb *ClusterBuilder, 
 			if port.Protocol == protocol.UDP {
 				continue
 			}
-			clusterKey := buildClusterKey(service, port, cb, proxy, efKeys)
-			cached, allFound := cb.getAllCachedSubsetClusters(*clusterKey)
-			if allFound && !features.EnableUnsafeAssertions {
-				hit += len(cached)
-				resources = append(resources, cached...)
-				continue
-			} else {
-				miss += len(cached)
-			}
-
-			// We have a cache miss, so we will re-generate the cluster and later store it in the cache.
-			lbEndpoints := cb.buildLocalityLbEndpoints(clusterKey.networkView, service, port.Port, nil)
 
 			// create default cluster
 			discoveryType := convertResolution(cb.proxyType, service)
-			defaultCluster := cb.buildDefaultCluster(clusterKey.clusterName, discoveryType, lbEndpoints, model.TrafficDirectionOutbound, port, service, nil)
-			if defaultCluster == nil {
-				continue
-			}
-			// If stat name is configured, build the alternate stats name.
-			if len(cb.req.Push.Mesh.OutboundClusterStatName) != 0 {
-				defaultCluster.cluster.AltStatName = util.BuildStatPrefix(cb.req.Push.Mesh.OutboundClusterStatName,
-					string(service.Hostname), "", port, &service.Attributes)
-			}
 
-			subsetClusters := cb.applyDestinationRule(defaultCluster, DefaultClusterMode, service, port,
-				clusterKey.networkView, clusterKey.destinationRule, clusterKey.serviceAccounts)
-
-			if patched := cp.applyResource(nil, defaultCluster.build()); patched != nil {
-				resources = append(resources, patched)
-				if features.EnableCDSCaching {
-					cb.cache.Add(clusterKey, cb.req, patched)
+			var outboundList []model.TrafficDirection
+			outboundList = append(outboundList, model.TrafficDirectionOutbound)
+			if features.EnableDualStack && proxy.SupportsIPv4() && proxy.SupportsIPv6() {
+				if len(service.DefaultAddresses) > 1 {
+					for _, addr := range service.DefaultAddresses {
+						if net.ParseIP(addr) != nil && net.ParseIP(addr).To4() == nil && net.ParseIP(addr).To16() != nil {
+							outboundList = append(outboundList, model.TrafficDirectionOutbound6)
+						}
+					}
+				} else if len(service.DefaultAddresses) == 1 && service.DefaultAddresses[0] == coreV1.ClusterIPNone {
+					// headless case, Don't know about the DefaultAddresses, only can enable for all
+					outboundList = append(outboundList, model.TrafficDirectionOutbound6)
 				}
 			}
-			for _, ss := range subsetClusters {
-				if patched := cp.applyResource(nil, ss); patched != nil {
-					nk := *clusterKey
-					nk.clusterName = ss.Name
+
+			for _, obDirection := range outboundList {
+				clusterKey := buildClusterKey(service, port, cb, proxy, obDirection, efKeys)
+				// We have a cache miss, so we will re-generate the cluster and later store it in the cache.
+				lbEndpoints := cb.buildLocalityLbEndpoints(clusterKey.networkView, service, port.Port, nil)
+				cached, allFound := cb.getAllCachedSubsetClusters(*clusterKey)
+				if allFound && !features.EnableUnsafeAssertions {
+					hit += len(cached)
+					resources = append(resources, cached...)
+					continue
+				} else {
+					miss += len(cached)
+				}
+
+				defaultCluster := cb.buildDefaultCluster(clusterKey.clusterName, discoveryType, lbEndpoints, model.TrafficDirectionOutbound, port, service, nil)
+				if defaultCluster == nil {
+					continue
+				}
+				// dns_lookup_family is only set to Cluster_V4_ONLY when the resolution type is STATIC_DNS
+				// for cases of NONE or AUTO (nil/default) this will remain unchanged
+				if features.EnableDualStack && obDirection == model.TrafficDirectionOutbound6 {
+					defaultCluster.cluster.DnsLookupFamily = cluster.Cluster_V6_ONLY
+				}
+				// If stat name is configured, build the alternate stats name.
+				if len(cb.req.Push.Mesh.OutboundClusterStatName) != 0 {
+					defaultCluster.cluster.AltStatName = util.BuildStatPrefix(cb.req.Push.Mesh.OutboundClusterStatName,
+						string(service.Hostname), "", port, &service.Attributes)
+				}
+
+				subsetClusters := cb.applyDestinationRule(defaultCluster, DefaultClusterMode, service, port,
+					clusterKey.networkView, clusterKey.destinationRule, clusterKey.serviceAccounts, obDirection)
+
+				if patched := cp.applyResource(nil, defaultCluster.build()); patched != nil {
 					resources = append(resources, patched)
 					if features.EnableCDSCaching {
-						cb.cache.Add(&nk, cb.req, patched)
+						cb.cache.Add(clusterKey, cb.req, patched)
+					}
+				}
+				for _, ss := range subsetClusters {
+					if patched := cp.applyResource(nil, ss); patched != nil {
+						nk := *clusterKey
+						nk.clusterName = ss.Name
+						resources = append(resources, patched)
+						if features.EnableCDSCaching {
+							cb.cache.Add(&nk, cb.req, patched)
+						}
 					}
 				}
 			}
@@ -354,7 +379,7 @@ func (configgen *ConfigGeneratorImpl) buildOutboundSniDnatClusters(proxy *model.
 			if defaultCluster == nil {
 				continue
 			}
-			subsetClusters := cb.applyDestinationRule(defaultCluster, SniDnatClusterMode, service, port, networkView, destRule, nil)
+			subsetClusters := cb.applyDestinationRule(defaultCluster, SniDnatClusterMode, service, port, networkView, destRule, nil, model.TrafficDirectionOutbound)
 			clusters = cp.conditionallyAppend(clusters, nil, defaultCluster.build())
 			clusters = cp.conditionallyAppend(clusters, nil, subsetClusters...)
 		}
@@ -394,7 +419,7 @@ func (configgen *ConfigGeneratorImpl) buildInboundClusters(cb *ClusterBuilder, p
 	sidecarScope := proxy.SidecarScope
 	noneMode := proxy.GetInterceptionMode() == model.InterceptionNone
 
-	_, actualLocalHost := getActualWildcardAndLocalHost(proxy)
+	wildCards := getActualWildcardAndLocalHost(proxy)
 
 	// No user supplied sidecar scope or the user supplied one has no ingress listeners
 	if !sidecarScope.HasIngressListener() {
@@ -415,20 +440,23 @@ func (configgen *ConfigGeneratorImpl) buildInboundClusters(cb *ClusterBuilder, p
 			clustersToBuild[ep] = append(clustersToBuild[ep], instance)
 		}
 
-		bind := actualLocalHost
-		if features.EnableInboundPassthrough {
-			bind = ""
-		}
-		// For each workload port, we will construct a cluster
-		for epPort, instances := range clustersToBuild {
-			// The inbound cluster port equals to endpoint port.
-			localCluster := cb.buildInboundClusterForPortOrUDS(epPort, bind, proxy, instances[0], instances)
-			// If inbound cluster match has service, we should see if it matches with any host name across all instances.
-			hosts := make([]host.Name, 0, len(instances))
-			for _, si := range instances {
-				hosts = append(hosts, si.Service.Hostname)
+		for _, wildcard := range wildCards {
+			bind := wildcard[1]
+			// Both EnableInboundPassthrough and EnableDualStack can not be enabled at the same time
+			if features.EnableInboundPassthrough && !features.EnableDualStack {
+				bind = ""
 			}
-			clusters = cp.conditionallyAppend(clusters, hosts, localCluster.build())
+			// For each workload port, we will construct a cluster
+			for epPort, instances := range clustersToBuild {
+				// The inbound cluster port equals to endpoint port.
+				localCluster := cb.buildInboundClusterForPortOrUDS(epPort, bind, proxy, instances[0], instances)
+				// If inbound cluster match has service, we should see if it matches with any host name across all instances.
+				hosts := make([]host.Name, 0, len(instances))
+				for _, si := range instances {
+					hosts = append(hosts, si.Service.Hostname)
+				}
+				clusters = cp.conditionallyAppend(clusters, hosts, localCluster.build())
+			}
 		}
 		return clusters
 	}
@@ -447,11 +475,11 @@ func (configgen *ConfigGeneratorImpl) buildInboundClusters(cb *ClusterBuilder, p
 		// * 127.0.0.1: send to localhost
 		// * 0.0.0.0: send to INSTANCE_IP
 		// * unix:///...: send to configured unix domain socket
-		endpointAddress := ""
+		var endpointAddresses []string
 		port := 0
 		if strings.HasPrefix(ingressListener.DefaultEndpoint, model.UnixAddressPrefix) {
 			// this is a UDS endpoint. assign it as is
-			endpointAddress = ingressListener.DefaultEndpoint
+			endpointAddresses = append(endpointAddresses, ingressListener.DefaultEndpoint)
 		} else if len(ingressListener.DefaultEndpoint) > 0 {
 			// parse the ip, port. Validation guarantees presence of :
 			parts := strings.Split(ingressListener.DefaultEndpoint, ":")
@@ -463,25 +491,33 @@ func (configgen *ConfigGeneratorImpl) buildInboundClusters(cb *ClusterBuilder, p
 				continue
 			}
 			if parts[0] == model.PodIPAddressPrefix {
-				endpointAddress = cb.proxyIPAddresses[0]
-			} else if parts[0] == model.LocalhostAddressPrefix {
-				endpointAddress = actualLocalHost
+				endpointAddresses = append(endpointAddresses, cb.proxyIPAddresses[0])
+			} else if parts[0] == LocalhostAddress || parts[0] == LocalhostIPv6Address {
+				for _, wildcard := range wildCards {
+					endpointAddresses = append(endpointAddresses, wildcard[1])
+				}
 			}
 		}
 
-		// Find the service instance that corresponds to this ingress listener by looking
-		// for a service instance that matches this ingress port as this will allow us
-		// to generate the right cluster name that LDS expects inbound|portNumber|portName|Hostname
-		instance := configgen.findOrCreateServiceInstance(instances, ingressListener, sidecarScope.Name, sidecarScope.Namespace)
-		instance.Endpoint.Address = endpointAddress
-		instance.ServicePort = listenPort
-		instance.Endpoint.ServicePortName = listenPort.Name
-		instance.Endpoint.EndpointPort = uint32(port)
+		if len(endpointAddresses) == 0 {
+			for _, wildcard := range wildCards {
+				endpointAddresses = append(endpointAddresses, wildcard[1])
+			}
+		}
+		for _, endpointAddress := range endpointAddresses {
+			// Find the service instance that corresponds to this ingress listener by looking
+			// for a service instance that matches this ingress port as this will allow us
+			// to generate the right cluster name that LDS expects inbound|portNumber|portName|Hostname
+			instance := configgen.findOrCreateServiceInstance(instances, ingressListener, sidecarScope.Name, sidecarScope.Namespace)
+			instance.Endpoint.Address = endpointAddress
+			instance.ServicePort = listenPort
+			instance.Endpoint.ServicePortName = listenPort.Name
+			instance.Endpoint.EndpointPort = uint32(port)
 
-		localCluster := cb.buildInboundClusterForPortOrUDS(int(ingressListener.Port.Number), endpointAddress, proxy, instance, nil)
-		clusters = cp.conditionallyAppend(clusters, []host.Name{instance.Service.Hostname}, localCluster.build())
+			localCluster := cb.buildInboundClusterForPortOrUDS(int(ingressListener.Port.Number), endpointAddress, proxy, instance, nil)
+			clusters = cp.conditionallyAppend(clusters, []host.Name{instance.Service.Hostname}, localCluster.build())
+		}
 	}
-
 	return clusters
 }
 

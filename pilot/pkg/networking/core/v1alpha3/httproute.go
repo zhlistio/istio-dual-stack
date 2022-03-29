@@ -16,12 +16,14 @@ package v1alpha3
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
 
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	coreV1 "k8s.io/api/core/v1"
 
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/features"
@@ -36,6 +38,7 @@ import (
 	"istio.io/istio/pkg/config/host"
 	"istio.io/istio/pkg/config/protocol"
 	"istio.io/istio/pkg/proto"
+	// "istio.io/pkg/log"
 )
 
 const (
@@ -133,21 +136,22 @@ func (configgen *ConfigGeneratorImpl) buildSidecarOutboundHTTPRouteConfig(
 	listenerPort := 0
 	useSniffing := false
 	var err error
+	rName := strings.TrimSuffix(routeName, constants.IPv6Suffix)
 	if features.EnableProtocolSniffingForOutbound &&
-		!strings.HasPrefix(routeName, model.UnixAddressPrefix) {
-		index := strings.IndexRune(routeName, ':')
+		!strings.HasPrefix(rName, model.UnixAddressPrefix) {
+		index := strings.IndexRune(rName, ':')
 		if index != -1 {
 			useSniffing = true
 		}
-		listenerPort, err = strconv.Atoi(routeName[index+1:])
+		listenerPort, err = strconv.Atoi(rName[index+1:])
 	} else {
-		listenerPort, err = strconv.Atoi(routeName)
+		listenerPort, err = strconv.Atoi(rName)
 	}
 
 	if err != nil {
 		// we have a port whose name is http_proxy or unix:///foo/bar
 		// check for both.
-		if routeName != model.RDSHttpProxy && !strings.HasPrefix(routeName, model.UnixAddressPrefix) {
+		if rName != model.RDSHttpProxy && !strings.HasPrefix(routeName, model.UnixAddressPrefix) {
 			// TODO: This is potentially one place where envoyFilter ADD operation can be helpful if the
 			// user wants to ship a custom RDS. But at this point, the match semantics are murky. We have no
 			// object to match upon. This needs more thought. For now, we will continue to return nil for
@@ -163,10 +167,13 @@ func (configgen *ConfigGeneratorImpl) buildSidecarOutboundHTTPRouteConfig(
 	if useSniffing && listenerPort != 0 {
 		// Check if we have already computed the list of all virtual hosts for this port
 		// If so, then  we simply have to return only the relevant virtual hosts for
-		// this listener's host:port
+		// this listener's host:port or host:port.ipv6
 		if vhosts, exists := vHostCache[listenerPort]; exists {
+			vhosts = configgen.matchingVirtualHosts(req, node, vhosts, routeName)
 			virtualHosts = getVirtualHostsForSniffedServicePort(vhosts, routeName)
-			cacheHit = true
+			if len(virtualHosts) >= 1 {
+				cacheHit = true
+			}
 		}
 	}
 	if !cacheHit {
@@ -179,6 +186,8 @@ func (configgen *ConfigGeneratorImpl) buildSidecarOutboundHTTPRouteConfig(
 			vHostCache[listenerPort] = virtualHosts
 		}
 
+		virtualHosts = configgen.matchingVirtualHosts(req, node, virtualHosts, routeName)
+
 		// FIXME: This will ignore virtual services with hostnames that do not match any service in the registry
 		// per api spec, these hostnames + routes should appear in the virtual hosts (think bookinfo.com and
 		// productpage.ns1.svc.cluster.local). See the TODO in BuildSidecarOutboundVirtualHosts for the right solution
@@ -190,7 +199,7 @@ func (configgen *ConfigGeneratorImpl) buildSidecarOutboundHTTPRouteConfig(
 	util.SortVirtualHosts(virtualHosts)
 
 	if !useSniffing {
-		virtualHosts = append(virtualHosts, node.CatchAllVirtualHost)
+		virtualHosts = append(virtualHosts, node.CatchAllVirtualHost...)
 	}
 
 	out := &route.RouteConfiguration{
@@ -214,6 +223,37 @@ func (configgen *ConfigGeneratorImpl) buildSidecarOutboundHTTPRouteConfig(
 	return resource, false
 }
 
+// this is to verify the routeName vs virtualHost to see whether it's matching ipv4 or ipv6
+func (configgen *ConfigGeneratorImpl) matchingVirtualHosts(req *model.PushRequest, proxy *model.Proxy,
+	virtualHosts []*route.VirtualHost, routeName string) []*route.VirtualHost {
+	var appendableVirtualHosts []*route.VirtualHost
+	for _, virtualHost := range virtualHosts {
+		hostName := strings.Split(virtualHost.Name, ":")[0]
+		svcMap := req.Push.ServiceIndex.HostnameAndNamespace[host.Name(hostName)]
+		for _, svc := range svcMap {
+			if svc != nil {
+				if len(virtualHost.Routes) == 1 && virtualHost.Routes[0].GetRoute() != nil &&
+					strings.Contains(virtualHost.Routes[0].GetRoute().GetCluster(), hostName) {
+					if strings.HasSuffix(routeName, constants.IPv6Suffix) {
+						if !strings.HasPrefix(virtualHost.Routes[0].GetRoute().GetCluster(), "outbound6") {
+							if len(svc.DefaultAddresses) > 1 || net.ParseIP(svc.DefaultAddress) != nil && net.ParseIP(svc.DefaultAddress).To4() != nil {
+								continue
+							}
+						}
+					} else {
+						if features.EnableDualStack && (strings.Contains(virtualHost.Routes[0].GetRoute().GetCluster(), "outbound6") ||
+							(len(svc.DefaultAddresses) == 1 && svc.DefaultAddresses[0] != coreV1.ClusterIPNone && net.ParseIP(svc.DefaultAddress) != nil && net.ParseIP(svc.DefaultAddress).To4() == nil)) {
+							continue
+						}
+					}
+				}
+			}
+			appendableVirtualHosts = append(appendableVirtualHosts, virtualHost)
+		}
+	}
+	return appendableVirtualHosts
+}
+
 func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext,
 	routeName string,
 	listenerPort int,
@@ -221,7 +261,6 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 	xdsCache model.XdsCache) ([]*route.VirtualHost, *discovery.Resource, *istio_route.Cache) {
 	var virtualServices []config.Config
 	var services []*model.Service
-
 	// Get the services from the egress listener.  When sniffing is enabled, we send
 	// route name as foo.bar.com:8080 which is going to match against the wildcard
 	// egress listener only. A route with sniffing would not have been generated if there
@@ -256,11 +295,12 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 			hostsByNamespace[svc.Attributes.Namespace] = append(hostsByNamespace[svc.Attributes.Namespace], svc.Hostname)
 		} else if svcPort, exists := svc.Ports.GetByPort(listenerPort); exists {
 			servicesByName[svc.Hostname] = &model.Service{
-				Hostname:       svc.Hostname,
-				DefaultAddress: svc.GetAddressForProxy(node),
-				MeshExternal:   svc.MeshExternal,
-				Resolution:     svc.Resolution,
-				Ports:          []*model.Port{svcPort},
+				Hostname:         svc.Hostname,
+				DefaultAddress:   svc.GetAddressForProxy(node),
+				DefaultAddresses: svc.DefaultAddresses,
+				MeshExternal:     svc.MeshExternal,
+				Resolution:       svc.Resolution,
+				Ports:            []*model.Port{svcPort},
 				Attributes: model.ServiceAttributes{
 					ServiceRegistry: svc.Attributes.ServiceRegistry,
 				},
@@ -303,7 +343,7 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 	}
 
 	// Get list of virtual services bound to the mesh gateway
-	virtualHostWrappers := istio_route.BuildSidecarVirtualHostWrapper(routeCache, node, push, servicesByName, virtualServices, listenerPort)
+	virtualHostWrappers := istio_route.BuildSidecarVirtualHostWrapper(routeCache, node, push, servicesByName, virtualServices, listenerPort, routeName)
 
 	resource, exist := xdsCache.Get(routeCache)
 	if exist {
@@ -316,7 +356,18 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 	knownFQDN := sets.Set{}
 
 	buildVirtualHost := func(hostname string, vhwrapper istio_route.VirtualHostWrapper, svc *model.Service) *route.VirtualHost {
+		var vService *model.Service
 		name := util.DomainName(hostname, vhwrapper.Port)
+		if svc == nil {
+			vService = servicesByName[host.Name(hostname)]
+		} else {
+			vService = svc
+		}
+		if features.EnableDualStack && (strings.HasPrefix(vhwrapper.Routes[0].GetRoute().GetCluster(), "outbound6") ||
+			(vService != nil && len(vService.DefaultAddresses) == 1 && len(vService.DefaultAddress) != 0 && net.ParseIP(vService.DefaultAddress) != nil &&
+				net.ParseIP(vService.DefaultAddress).To4() == nil)) {
+			name += constants.IPv6Suffix
+		}
 		if duplicateVirtualHost(name, vhosts) {
 			// This means this virtual host has caused duplicate virtual host name.
 			var msg string
@@ -328,15 +379,28 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 			push.AddMetric(model.DuplicatedDomains, name, node.ID, msg)
 			return nil
 		}
+		var dl int
 		var domains []string
 		var altHosts []string
 		if svc == nil {
 			domains = []string{util.IPv6Compliant(hostname), name}
+			dl = len(domains)
+			domains = dedupeDomains(domains, vhdomains, nil, nil)
+			if features.EnableDualStack && dl > 0 && len(domains) == 0 {
+				domains = []string{hostname, name}
+			}
 		} else {
-			domains, altHosts = generateVirtualHostDomains(svc, vhwrapper.Port, node)
+			useIPv6Addresses := (strings.HasSuffix(name, constants.IPv6Suffix)) ||
+				(len(svc.DefaultAddresses) == 1 && net.ParseIP(svc.DefaultAddress) != nil && net.ParseIP(svc.DefaultAddress).To4() == nil)
+			domains, altHosts = generateVirtualHostDomains(svc, vhwrapper.Port, node, push, useIPv6Addresses)
+			dl = len(domains)
+			dedupedDomain := dedupeDomains(domains, vhdomains, altHosts, knownFQDN)
+			if !features.EnableDualStack || len(dedupedDomain) > 0 {
+				// this is the case like Headless,
+				domains = dedupedDomain
+			}
 		}
-		dl := len(domains)
-		domains = dedupeDomains(domains, vhdomains, altHosts, knownFQDN)
+
 		if dl != len(domains) {
 			var msg string
 			if svc == nil {
@@ -362,6 +426,11 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 	for _, virtualHostWrapper := range virtualHostWrappers {
 		for _, svc := range virtualHostWrapper.Services {
 			name := util.DomainName(string(svc.Hostname), virtualHostWrapper.Port)
+			// append name .ipv6 if it's for ipv6 route
+			if features.EnableDualStack && (strings.HasPrefix(virtualHostWrapper.Routes[0].GetRoute().GetCluster(), "outbound6") ||
+				(len(svc.DefaultAddresses) == 1 && net.ParseIP(svc.DefaultAddress) != nil && net.ParseIP(svc.DefaultAddress).To4() == nil)) {
+					name += constants.IPv6Suffix
+			}
 			knownFQDN.Insert(name, string(svc.Hostname))
 		}
 	}
@@ -397,6 +466,35 @@ func BuildSidecarOutboundVirtualHosts(node *model.Proxy, push *model.PushContext
 	return out, nil, routeCache
 }
 
+// cleanupDomains checks validated domains and returns back them if dual-stack is enabled
+func cleanupDomains(domains []string, allowIPv6Addresses bool) []string {
+	if !features.EnableDualStack {
+		return domains
+	}
+
+	var cleanedUpDomains []string
+	for _, domain := range domains {
+		addr, _, err := net.SplitHostPort(domain)
+		_, ok := err.(*net.AddrError)
+		if err != nil && ok {
+			addr = domain
+		}
+		if net.ParseIP(addr) != nil {
+			if allowIPv6Addresses && net.ParseIP(addr).To4() != nil {
+				continue
+			}
+			if !allowIPv6Addresses && net.ParseIP(addr).To4() == nil && net.ParseIP(addr).To16() != nil {
+				continue
+			}
+			cleanedUpDomains = append(cleanedUpDomains, domain)
+		} else {
+			cleanedUpDomains = append(cleanedUpDomains, domain)
+		}
+	}
+
+	return cleanedUpDomains
+}
+
 // duplicateVirtualHost checks whether the virtual host with the same name exists in the route.
 func duplicateVirtualHost(vhost string, vhosts sets.Set) bool {
 	if vhosts.Contains(vhost) {
@@ -409,8 +507,16 @@ func duplicateVirtualHost(vhost string, vhosts sets.Set) bool {
 // dedupeDomains removes the duplicate domains from the passed in domains.
 func dedupeDomains(domains []string, vhdomains sets.Set, expandedHosts []string, knownFQDNs sets.Set) []string {
 	temp := domains[:0]
+	// if there is difference in the domains, it won't be skipped
+	check := false
 	for _, d := range domains {
-		if vhdomains.Contains(d) {
+		if !vhdomains.Contains(d) && net.ParseIP(d) != nil {
+			check = true
+			break
+		}
+	}
+	for _, d := range domains {
+		if !check && vhdomains.Contains(d) {
 			continue
 		}
 		// Check if the domain is an "expanded" host, and its also a known FQDN
@@ -432,12 +538,11 @@ func dedupeDomains(domains []string, vhdomains sets.Set, expandedHosts []string,
 // all virtual hosts that are usually supplied for 0.0.0.0:PORT.
 func getVirtualHostsForSniffedServicePort(vhosts []*route.VirtualHost, routeName string) []*route.VirtualHost {
 	var virtualHosts []*route.VirtualHost
+	// to support dual stack, instead of checking the domain name, check the routeName match
 	for _, vh := range vhosts {
-		for _, domain := range vh.Domains {
-			if domain == routeName {
-				virtualHosts = append(virtualHosts, vh)
-				break
-			}
+		if routeName == vh.Name {
+			virtualHosts = append(virtualHosts, vh)
+			break
 		}
 	}
 
@@ -456,7 +561,8 @@ func getVirtualHostsForSniffedServicePort(vhosts []*route.VirtualHost, routeName
 
 // generateVirtualHostDomains generates the set of domain matches for a service being accessed from
 // a proxy node
-func generateVirtualHostDomains(service *model.Service, port int, node *model.Proxy) ([]string, []string) {
+func generateVirtualHostDomains(service *model.Service, port int, node *model.Proxy,
+	push *model.PushContext, allowIPv6Addresses bool) ([]string, []string) {
 	altHosts := GenerateAltVirtualHosts(string(service.Hostname), port, node.DNSDomain)
 	domains := []string{util.IPv6Compliant(string(service.Hostname)), util.DomainName(string(service.Hostname), port)}
 	domains = append(domains, altHosts...)
@@ -468,11 +574,28 @@ func generateVirtualHostDomains(service *model.Service, port int, node *model.Pr
 		}
 	}
 
-	svcAddr := service.GetAddressForProxy(node)
-	if len(svcAddr) > 0 && svcAddr != constants.UnspecifiedIP {
-		domains = append(domains, util.IPv6Compliant(svcAddr), util.DomainName(svcAddr, port))
+	for _, svcAddr := range service.GetServiceAddressesForProxy(node, push) {
+		allDomains := generateVirtualHostDomainsForIPAddresses(svcAddr, port)
+		if features.EnableDualStack {
+			allDomains = cleanupDomains(allDomains, allowIPv6Addresses)
+		}
+		domains = append(domains, allDomains...)
 	}
+
 	return domains, altHosts
+}
+
+func generateVirtualHostDomainsForIPAddresses(svcAddr string, port int) []string {
+	var domains []string
+	if len(svcAddr) > 0 && (svcAddr != constants.UnspecifiedIP &&
+		svcAddr != constants.UnspecifiedIPv6) && net.ParseIP(svcAddr) != nil {
+		// add a vhost match for the IP (if its non CIDR)
+		cidr := util.ConvertAddressToCidr(svcAddr)
+		if cidr.PrefixLen.Value == 32 || cidr.PrefixLen.Value == 128 {
+			domains = append(domains, util.IPv6Compliant(svcAddr), util.DomainName(svcAddr, port))
+		}
+	}
+	return domains
 }
 
 // GenerateAltVirtualHosts given a service and a port, generates all possible HTTP Host headers.

@@ -86,7 +86,8 @@ func (cfg Config) toTemplateParams() (map[string]interface{}, error) {
 		option.OutlierLogPath(cfg.Metadata.OutlierLogPath),
 		option.ProvCert(cfg.Metadata.ProvCert),
 		option.DiscoveryHost(discHost),
-		option.XdsType(xdsType))
+		option.XdsType(xdsType),
+		option.DualStack(cfg.Metadata.DualStack))
 
 	if cfg.Metadata.StsPort != "" {
 		stsPort, err := strconv.Atoi(cfg.Metadata.StsPort)
@@ -108,13 +109,17 @@ func (cfg Config) toTemplateParams() (map[string]interface{}, error) {
 	if network.IsIPv6Proxy(cfg.Metadata.InstanceIPs) {
 		opts = append(opts,
 			option.Localhost(option.LocalhostIPv6),
-			option.Wildcard(option.WildcardIPv6),
+			option.IPv6Wildcard(option.WildcardIPv6),
 			option.DNSLookupFamily(option.DNSLookupFamilyIPv6))
-	} else {
+	}
+
+	if network.IsIPv4Proxy(cfg.Metadata.InstanceIPs) {
 		opts = append(opts,
 			option.Localhost(option.LocalhostIPv4),
-			option.Wildcard(option.WildcardIPv4),
-			option.DNSLookupFamily(option.DNSLookupFamilyIPv4))
+			option.IPv4Wildcard(option.WildcardIPv4))
+		if !network.IsIPv6Proxy(cfg.Metadata.InstanceIPs) {
+			opts = append(opts, option.DNSLookupFamily(option.DNSLookupFamilyIPv4))
+		}
 	}
 
 	proxyOpts, err := getProxyConfigOptions(cfg.Metadata)

@@ -134,6 +134,7 @@ var (
 				NodeIPs:           proxy.IPAddresses,
 				Sidecar:           proxy.Type == model.SidecarProxy,
 				OutlierLogPath:    outlierLogPath,
+				DualStack:         options.DualStackEnv,
 			}
 			agentOptions := options.NewAgentOptions(proxy, proxyConfig)
 			agent := istio_agent.NewAgent(proxyConfig, agentOptions, secOpts, envoyOptions)
@@ -221,7 +222,7 @@ func initStatusServer(ctx context.Context, proxy *model.Proxy, proxyConfig *mesh
 
 func initStsServer(proxy *model.Proxy, tokenManager security.TokenManager) (*stsserver.Server, error) {
 	localHostAddr := localHostIPv4
-	if network.IsIPv6Proxy(proxy.IPAddresses) {
+	if network.IsIPv6Proxy(proxy.IPAddresses) && !network.IsIPv4Proxy(proxy.IPAddresses) {
 		localHostAddr = localHostIPv6
 	}
 	stsServer, err := stsserver.NewServer(stsserver.Config{

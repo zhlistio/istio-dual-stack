@@ -140,11 +140,13 @@ func buildOutboundNetworkFiltersWithWeightedClusters(node *model.Proxy, routes [
 	for _, route := range routes {
 		service := push.ServiceForHostname(node, host.Name(route.Destination.Host))
 		if route.Weight > 0 {
-			clusterName := istioroute.GetDestinationCluster(route.Destination, service, port.Port)
-			clusterSpecifier.WeightedClusters.Clusters = append(clusterSpecifier.WeightedClusters.Clusters, &tcp.TcpProxy_WeightedCluster_ClusterWeight{
-				Name:   clusterName,
-				Weight: uint32(route.Weight),
-			})
+			clusterNames := istioroute.GetDestinationCluster(route.Destination, service, port.Port)
+			for _, clusterName := range clusterNames {
+				clusterSpecifier.WeightedClusters.Clusters = append(clusterSpecifier.WeightedClusters.Clusters, &tcp.TcpProxy_WeightedCluster_ClusterWeight{
+					Name:   clusterName,
+					Weight: uint32(route.Weight),
+				})
+			}
 		}
 	}
 
@@ -228,16 +230,19 @@ func buildOutboundNetworkFilters(node *model.Proxy,
 	service := push.ServiceForHostname(node, host.Name(routes[0].Destination.Host))
 	destRule := push.DestinationRule(node, service)
 	destinationRule := CastDestinationRule(destRule)
+	var result []*listener.Filter
 	if len(routes) == 1 {
-		clusterName := istioroute.GetDestinationCluster(routes[0].Destination, service, port.Port)
-		statPrefix := clusterName
-		// If stat name is configured, build the stat prefix from configured pattern.
-		if len(push.Mesh.OutboundClusterStatName) != 0 && service != nil {
-			statPrefix = util.BuildStatPrefix(push.Mesh.OutboundClusterStatName, routes[0].Destination.Host,
-				routes[0].Destination.Subset, port, &service.Attributes)
+		clusterNames := istioroute.GetDestinationCluster(routes[0].Destination, service, port.Port)
+		for _, clusterName := range clusterNames {
+			statPrefix := clusterName
+			// If stat name is configured, build the stat prefix from configured pattern.
+			if len(push.Mesh.OutboundClusterStatName) != 0 && service != nil {
+				statPrefix = util.BuildStatPrefix(push.Mesh.OutboundClusterStatName, routes[0].Destination.Host,
+					routes[0].Destination.Subset, port, &service.Attributes)
+			}
+			result = append(result, buildOutboundNetworkFiltersWithSingleDestination(push, node, statPrefix, clusterName, routes[0].Destination.Subset, port, destinationRule)...)
+			return result
 		}
-
-		return buildOutboundNetworkFiltersWithSingleDestination(push, node, statPrefix, clusterName, routes[0].Destination.Subset, port, destinationRule)
 	}
 	return buildOutboundNetworkFiltersWithWeightedClusters(node, routes, push, port, configMeta, destinationRule)
 }

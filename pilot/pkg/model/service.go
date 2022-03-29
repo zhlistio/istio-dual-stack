@@ -32,8 +32,10 @@ import (
 
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"github.com/mitchellh/copystructure"
+	coreV1 "k8s.io/api/core/v1"
 
 	"istio.io/api/label"
+	"istio.io/istio/pilot/pkg/features"
 	"istio.io/istio/pilot/pkg/networking"
 	"istio.io/istio/pilot/pkg/serviceregistry/provider"
 	"istio.io/istio/pilot/pkg/util/sets"
@@ -80,7 +82,8 @@ type Service struct {
 
 	// DefaultAddress specifies the default service IP of the load balancer.
 	// Do not access directly. Use GetAddressForProxy
-	DefaultAddress string `json:"defaultAddress,omitempty"`
+	DefaultAddress   string `json:"defaultAddress,omitempty"`
+	DefaultAddresses []string `json:"clusterIPs,omitempty" protobuf:"bytes,18,opt,name=clusterIPs"`
 
 	// AutoAllocatedAddress specifies the automatically allocated
 	// IPv4 address out of the reserved Class E subnet
@@ -203,14 +206,18 @@ type TrafficDirection string
 
 const (
 	// TrafficDirectionInbound indicates inbound traffic
-	TrafficDirectionInbound TrafficDirection = "inbound"
+	TrafficDirectionInbound  TrafficDirection = "inbound"
+	TrafficDirectionInbound6 TrafficDirection = "inbound6"
 	// TrafficDirectionOutbound indicates outbound traffic
-	TrafficDirectionOutbound TrafficDirection = "outbound"
+	TrafficDirectionOutbound  TrafficDirection = "outbound"
+	TrafficDirectionOutbound6 TrafficDirection = "outbound6"
 
 	// trafficDirectionOutboundSrvPrefix the prefix for a DNS SRV type subset key
-	trafficDirectionOutboundSrvPrefix = string(TrafficDirectionOutbound) + "_"
+	trafficDirectionOutboundSrvPrefix  = string(TrafficDirectionOutbound) + "_"
+	trafficDirectionOutbound6SrvPrefix = string(TrafficDirectionOutbound6) + "_"
 	// trafficDirectionInboundSrvPrefix the prefix for a DNS SRV type subset key
-	trafficDirectionInboundSrvPrefix = string(TrafficDirectionInbound) + "_"
+	trafficDirectionInboundSrvPrefix  = string(TrafficDirectionInbound) + "_"
+	trafficDirectionInbound6SrvPrefix = string(TrafficDirectionInbound6) + "_"
 )
 
 // ServiceInstance represents an individual instance of a specific version
@@ -681,7 +688,10 @@ func BuildSubsetKey(direction TrafficDirection, subsetName string, hostname host
 }
 
 // BuildInboundSubsetKey generates a unique string referencing service instances with port.
-func BuildInboundSubsetKey(port int) string {
+func BuildInboundSubsetKey(port int, dualIpv6 bool) string {
+	if dualIpv6 {
+		return BuildSubsetKey(TrafficDirectionInbound6, "", "", port)
+	}
 	return BuildSubsetKey(TrafficDirectionInbound, "", "", port)
 }
 
@@ -715,7 +725,9 @@ func ParseSubsetKey(s string) (direction TrafficDirection, subsetName string, ho
 	// Since we do not want every callsite to implement the logic to differentiate between the two forms
 	// we add an alternate parser here.
 	if strings.HasPrefix(s, trafficDirectionOutboundSrvPrefix) ||
-		strings.HasPrefix(s, trafficDirectionInboundSrvPrefix) {
+		strings.HasPrefix(s, trafficDirectionInboundSrvPrefix) ||
+		strings.HasPrefix(s, trafficDirectionOutbound6SrvPrefix) ||
+		strings.HasPrefix(s, trafficDirectionInbound6SrvPrefix) {
 		parts = strings.SplitN(s, ".", 4)
 		dnsSrvMode = true
 	} else {
@@ -756,6 +768,43 @@ func (s *Service) GetAddressForProxy(node *Proxy) string {
 
 	return s.DefaultAddress
 }
+
+// GetServiceAddressesForProxy returns a Service's list of IP address specific to the cluster where the node resides
+func (s *Service) GetServiceAddressesForProxy(node *Proxy, push *PushContext) []string {
+	var addresses []string
+	if !features.EnableDualStack {
+		addresses = append(addresses, s.GetAddressForProxy(node))
+		return addresses
+	}
+	if node.Metadata != nil && node.Metadata.ClusterID != "" {
+		curSvc := push.ServiceIndex.HostnameAndNamespace[s.Hostname][s.Attributes.Namespace]
+		if curSvc != nil {
+			curSvcAddrs := curSvc.ClusterVIPs.GetAddressesFor(node.Metadata.ClusterID)
+			if len(curSvcAddrs) > 0 {
+				for _, curSvcAddr := range curSvcAddrs {
+					addresses = append(addresses, curSvcAddr)
+					if curSvcAddr != constants.UnspecifiedIP &&
+						curSvcAddr != constants.UnspecifiedIPv6 &&
+						len(s.DefaultAddresses) > 1 {
+							addresses = append(addresses, s.DefaultAddresses[1])
+					}
+					if len(s.DefaultAddresses) == 1 && s.DefaultAddresses[0] == coreV1.ClusterIPNone && node.SupportsIPv6() {
+						addresses = append(addresses, constants.UnspecifiedIPv6)
+					}
+				}
+			}
+		}
+		return addresses
+	}
+	if node.Metadata != nil && node.Metadata.DNSCapture && node.Metadata.DNSAutoAllocate &&
+		(s.DefaultAddress == constants.UnspecifiedIP || s.DefaultAddress == constants.UnspecifiedIPv6) &&
+		s.AutoAllocatedAddress != "" {
+		addresses = append(addresses, s.AutoAllocatedAddress)
+		return addresses
+	}
+	return s.DefaultAddresses
+}
+
 
 // GetTLSModeFromEndpointLabels returns the value of the label
 // security.istio.io/tlsMode if set. Do not return Enums or constants
@@ -807,6 +856,7 @@ func (s *Service) DeepCopy() *Service {
 		Hostname:             s.Hostname,
 		ClusterVIPs:          s.ClusterVIPs.DeepCopy(),
 		DefaultAddress:       s.DefaultAddress,
+		DefaultAddresses:     s.DefaultAddresses,
 		AutoAllocatedAddress: s.AutoAllocatedAddress,
 		Resolution:           s.Resolution,
 		MeshExternal:         s.MeshExternal,

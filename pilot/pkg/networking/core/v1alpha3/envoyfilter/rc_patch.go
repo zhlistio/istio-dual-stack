@@ -24,6 +24,7 @@ import (
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/util/runtime"
+	"istio.io/istio/pkg/config/constants"
 	"istio.io/istio/pilot/pkg/util/sets"
 	"istio.io/pkg/log"
 )
@@ -270,7 +271,8 @@ func routeConfigurationMatch(patchContext networking.EnvoyFilter_PatchContext, r
 		if strings.HasPrefix(rc.Name, string(model.TrafficDirectionInbound)) {
 			_, _, _, listenerPort = model.ParseSubsetKey(rc.Name)
 		} else {
-			listenerPort, _ = strconv.Atoi(rc.Name)
+			name := strings.TrimSuffix(rc.Name, constants.IPv6Suffix)
+			listenerPort, _ = strconv.Atoi(name)
 		}
 
 		// FIXME: Ports on a route can be 0. the API only takes uint32 for ports

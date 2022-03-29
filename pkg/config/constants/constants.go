@@ -16,7 +16,8 @@ package constants
 
 const (
 	// UnspecifiedIP constant for empty IP address
-	UnspecifiedIP = "0.0.0.0"
+	UnspecifiedIP   = "0.0.0.0"
+	UnspecifiedIPv6 = "::"
 
 	// AuthCertsPath is the path location for mTLS certificates
 	AuthCertsPath = "/etc/certs/"
@@ -139,4 +140,10 @@ const (
 	// CertProviderNone does not create any certificates for the control plane. It is assumed that some external
 	// load balancer, such as an Istio Gateway, is terminating the TLS.
 	CertProviderNone = "none"
+
+	// Suffix used to represent IPv6 routes in dual stack mode
+	IPv6Suffix = ".ipv6"
+
+	// Prefix used to represent IPv6 routes in dual stack mode
+	IPv6Prefix = "ipv6."
 )

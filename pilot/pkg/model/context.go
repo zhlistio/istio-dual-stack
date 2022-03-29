@@ -306,7 +306,7 @@ type Proxy struct {
 	// XdsNode is the xDS node identifier
 	XdsNode *core.Node
 
-	CatchAllVirtualHost *route.VirtualHost
+	CatchAllVirtualHost []*route.VirtualHost
 }
 
 // WatchedResource tracks an active DiscoveryRequest subscription.
@@ -487,6 +487,9 @@ type BootstrapNodeMetadata struct {
 
 	// IstioProxySHA is the SHA of the proxy version.
 	IstioProxySHA string `json:"ISTIO_PROXY_SHA,omitempty"`
+
+	// DualStack is the feature flag of dual-stack support.
+	DualStack bool `json:"DUAL_STACK,omitempty"`
 }
 
 // NodeMetadata defines the metadata associated with a proxy
@@ -856,6 +859,8 @@ func (node *Proxy) SetWorkloadLabels(env *Environment) {
 
 // DiscoverIPVersions discovers the IP Versions supported by Proxy based on its IP addresses.
 func (node *Proxy) DiscoverIPVersions() {
+	node.ipv4Support = false
+	node.ipv6Support = false
 	for i := 0; i < len(node.IPAddresses); i++ {
 		addr := net.ParseIP(node.IPAddresses[i])
 		if addr == nil {
@@ -866,9 +871,10 @@ func (node *Proxy) DiscoverIPVersions() {
 		if node.GlobalUnicastIP == "" && addr.IsGlobalUnicast() {
 			node.GlobalUnicastIP = addr.String()
 		}
+		log.Infof("DiscoverIPVersions %s", addr)
 		if addr.To4() != nil {
 			node.ipv4Support = true
-		} else {
+		} else if addr.To16() != nil && !addr.IsLinkLocalUnicast() {
 			node.ipv6Support = true
 		}
 	}

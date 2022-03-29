@@ -55,6 +55,7 @@ type ProxyConfig struct {
 	// For unit testing, in combination with NoEnvoy prevents agent.Run from blocking
 	TestOnly    bool
 	AgentIsRoot bool
+	DualStack   bool
 }
 
 // NewProxy creates an instance of the proxy control commands
@@ -114,7 +115,7 @@ func (e *envoy) UpdateConfig(config []byte) error {
 
 func (e *envoy) args(fname string, epoch int, bootstrapConfig string) []string {
 	proxyLocalAddressType := "v4"
-	if network.IsIPv6Proxy(e.NodeIPs) {
+	if !network.IsIPv4Proxy(e.NodeIPs) && network.IsIPv6Proxy(e.NodeIPs) {
 		proxyLocalAddressType = "v6"
 	}
 	startupArgs := []string{

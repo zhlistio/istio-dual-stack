@@ -225,7 +225,7 @@ var (
 
 	enableEndpointSliceController, endpointSliceControllerSpecified = env.RegisterBoolVar(
 		"PILOT_USE_ENDPOINT_SLICE",
-		false,
+		true,
 		"If enabled, Pilot will use EndpointSlices as the source of endpoints for Kubernetes services. "+
 			"By default, this is false, and Endpoints will be used. This requires the Kubernetes EndpointSlice controller to be enabled. "+
 			"Currently this is mutual exclusive - either Endpoints or EndpointSlices will be used",
@@ -583,6 +583,9 @@ var (
 				"`clientKey`, `clientCertificate`, `tokenFile`, and `exec`.").Get()
 		return sets.NewSet(strings.Split(v, ",")...)
 	}()
+
+	EnableDualStack = env.RegisterBoolVar("ISTIO_DUAL_STACK", true,
+		"If enabled, pilot will configure clusters/listeners/routes for dual stack capability.").Get()
 )
 
 // EnableEndpointSliceController returns the value of the feature flag and whether it was actually specified.

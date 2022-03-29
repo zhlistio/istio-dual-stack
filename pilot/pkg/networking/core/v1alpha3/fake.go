@@ -242,6 +242,50 @@ func (f *ConfigGenTest) SetupProxy(p *model.Proxy) *model.Proxy {
 	return p
 }
 
+// SetupProxy initializes a proxy for the current environment. This should generally be used when creating
+// any proxy. For example, `p := SetupProxy(&model.Proxy{...})`.
+func (f *ConfigGenTest) SetupDualProxy(p *model.Proxy) *model.Proxy {
+	// Setup defaults
+	if p == nil {
+		p = &model.Proxy{}
+	}
+	if p.Metadata == nil {
+		p.Metadata = &model.NodeMetadata{}
+	}
+	if p.Metadata.IstioVersion == "" {
+		p.Metadata.IstioVersion = "1.9.0"
+	}
+	if p.IstioVersion == nil {
+		p.IstioVersion = model.ParseIstioVersion(p.Metadata.IstioVersion)
+	}
+	if p.Type == "" {
+		p.Type = model.SidecarProxy
+	}
+	if p.ConfigNamespace == "" {
+		p.ConfigNamespace = "default"
+	}
+	if p.Metadata.Namespace == "" {
+		p.Metadata.Namespace = p.ConfigNamespace
+	}
+	if p.ID == "" {
+		p.ID = "app.test"
+	}
+	if p.DNSDomain == "" {
+		p.DNSDomain = p.ConfigNamespace + ".svc.cluster.local"
+	}
+	if len(p.IPAddresses) == 0 {
+		p.IPAddresses = []string{"1.1.1.1", "fc00:f853:ccd:e793::1"}
+	}
+
+	// Initialize data structures
+	pc := f.PushContext()
+	p.SetSidecarScope(pc)
+	p.SetGatewaysForProxy(pc)
+	p.SetServiceInstances(f.env.ServiceDiscovery)
+	p.DiscoverIPVersions()
+	return p
+}
+
 // TODO do we need lock around push context?
 func (f *ConfigGenTest) Listeners(p *model.Proxy) []*listener.Listener {
 	return f.ConfigGen.BuildListeners(p, f.PushContext())

@@ -140,16 +140,20 @@ function setup_kind_cluster() {
   # shellcheck disable=SC2064
   trap "cleanup_kind_cluster ${NAME}" EXIT
 
+  if ! type "kind" > /dev/null; then
+    echo "please install kind at first" 
+  fi
+
     # If config not explicitly set, then use defaults
   if [[ -z "${CONFIG}" ]]; then
     # Kubernetes 1.15+
     CONFIG=${DEFAULT_CLUSTER_YAML}
     # Configure the cluster IP Family only for default configs
-    if [ "${IP_FAMILY}" = "ipv6" ]; then
-      grep 'ipFamily: ipv6' "${CONFIG}" || \
+    if [ "${IP_FAMILY}" != "ipv4" ]; then
+      grep "ipFamily: ${IP_FAMILY}" "${CONFIG}" || \
       cat <<EOF >> "${CONFIG}"
 networking:
-  ipFamily: ipv6
+  ipFamily: ${IP_FAMILY}
 EOF
     fi
   fi
@@ -160,10 +164,61 @@ EOF
     exit 1
   fi
 
+  if [[ -n ${DOCKER_CONFIG:-""} ]]; then
+    # setup credentials on each node
+    echo "Copying docker credentials to kind cluster name='${NAME}' nodes ..."
+    for node in $(kind get nodes --name "${NAME}"); do
+       # the -oname format is kind/name (so node/name) we just want name
+       node_name=${node#node/}
+       # copy the config to where kubelet will look
+       docker cp "${DOCKER_CONFIG}/config.json" "${node_name}:/var/lib/kubelet/config.json"
+       # restart kubelet to pick up the config
+       docker exec "${node_name}" systemctl restart kubelet.service
+    done
+  fi
+
   # If metrics server configuration directory is specified then deploy in
   # the cluster just created
   if [[ -n ${METRICS_SERVER_CONFIG_DIR} ]]; then
     kubectl apply -f "${METRICS_SERVER_CONFIG_DIR}"
+  fi
+
+  # update coredns to use respond to A queries and AAAA queries and not
+  # only the type of the first Cluster IP
+  if [ "${IP_FAMILY}" == "dual" ]; then
+    cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:coredns
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  - services
+  - pods
+  - namespaces
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+EOF
+    kubectl patch deployment coredns -n kube-system -p '{"spec":{"template":{"spec":{"containers":[{"name":"coredns","readinessProbe":{"httpGet":{"path":"/health","port":8080}}}]}}}}'
+    kubectl patch deployment coredns -n kube-system -p '{"spec":{"template":{"spec":{"containers":[{"name":"coredns", "image":"coredns/coredns:1.8.6"}]}}}}'
+    kubectl rollout restart -n kube-system deployment coredns
   fi
 
   # Install Metallb if not set to install explicitly
@@ -214,7 +269,7 @@ function cleanup_kind_clusters() {
 # setup_kind_clusters sets up a given number of kind clusters with given topology
 # as specified in cluster topology configuration file.
 # 1. IMAGE = docker image used as node by KinD
-# 2. IP_FAMILY = either ipv4 or ipv6
+# 2. IP_FAMILY = either ipv4 or ipv6 or dual
 #
 # NOTE: Please call load_cluster_topology before calling this method as it expects
 # cluster topology information to be loaded in advance
